@@ -9,7 +9,7 @@ Template: [eugeneyan/ml-design-docs](https://github.com/eugeneyan/ml-design-docs
 ## 1 Overview
 
 Kyiv residents and businesses plan their days and nights around air-raid alerts, but they learn about an alert only when the siren starts and never know how long it will last.
-The system issues a 12-hour forecast twice a day (10:00 and 22:00 Kyiv time) with the probability of an alert in each hour of the window, and predicts the duration of every Kyiv alert (median and 90th percentile) the moment it starts.
+The system issues a 12-hour forecast twice a day (10:00 and 22:00 Kyiv time) with the probability of an alert in each hour of the window and the likely threat type (drones, cruise missiles, ballistic), and predicts the duration of every Kyiv alert (median and 90th percentile) the moment it starts.
 It learns from the public history of air-raid alerts across Ukraine since 2022 and from the Ukrainian Air Force's public Telegram channel, and it retrains as new alerts and posts arrive.
 The desired outcome is a planning aid served through a REST API that is measurably better than simple hour-of-day and recent-history baselines and that notices when attack patterns change; the official alert always takes precedence over the model.
 
@@ -41,7 +41,9 @@ Three layers, kept apart. Each has a target or a stated assumption.
 | **Model** (offline) | **Brier score** on hourly probabilities (optimising). **AUC ≥ 0.60** on hourly labels (satisficing). Baselines on the 2026-03…2026-09 hold-out: hour-of-day climatology Brier 0.0981 / AUC 0.578. | **Pinball loss** at q = 0.5 and q = 0.9 (optimising). **P90 coverage 85–95%** (satisficing). Baseline (last-12-months median): MAE 34.6 min. |
 | **System** | Forecast published **≤ 5 min** after 10:00 / 22:00. Feature freshness at issue time: alert map ≤ 30 s old, Telegram ≤ 5 min old. | Prediction available **≤ 60 s (p95)** after the alert starts in the alerts.in.ua feed. API p95 latency ≤ 200 ms. |
 
-Optimising vs satisficing: Brier and pinball loss are minimised; AUC, P90 coverage, freshness and latency only have to clear their thresholds.
+**M3 (threat type, part of the M1 output):** model metric = multiclass log-loss of the type probabilities (optimising), compared with a baseline that always predicts last month's type mix; no separate business metric.
+
+Optimising vs satisficing: Brier, pinball loss and log-loss are minimised; AUC, P90 coverage, freshness and latency only have to clear their thresholds.
 
 ## 4 Requirements and constraints
 
@@ -50,7 +52,7 @@ Optimising vs satisficing: Brier and pinball loss are minimised; AUC, P90 covera
 | # | Requirement |
 |---|---|
 | F1 | **Inputs:** finished Kyiv and Ukraine-wide alert intervals (history and monthly), currently active alerts (polled every 20 s), Air Force Telegram posts (scraped every 2 min). |
-| F2 | **M1 output:** at 10:00 and 22:00 Kyiv time, for the next 12 hours: 12 hourly probabilities that Kyiv is under alert for ≥ 10 min of that hour, P(≥ 60 min of alert in the window), expected alert minutes, `model_version`, `issued_at`, `degraded` flag. |
+| F2 | **M1 + M3 output:** at 10:00 and 22:00 Kyiv time, for the next 12 hours: 12 hourly probabilities that Kyiv is under alert for ≥ 10 min of that hour, a risk band per hour, the threat-type probabilities if an alert happens, window summary (P(≥ 60 min of alert), expected alert-hours, P(any drone alert), P(any missile/ballistic alert)), `model_version`, `issued_at`, `degraded` flag. Format in 5.1. |
 | F3 | **M2 output:** when a Kyiv alert starts: predicted duration P50 and P90 in minutes, threat type used, `model_version`, `alert_started_at`, `degraded` flag. |
 | F4 | **Who calls:** any API client, read-only: `GET /v1/forecast/latest`, `GET /v1/alert/current`, `GET /v1/health`. The internal `POST /v1/predict/duration` is called only by the alerts poller inside the cluster. |
 | F5 | **Fallback:** if a model, a feature or a data source is unavailable, the API returns the baseline prediction with `degraded: true` instead of an error. |
@@ -82,8 +84,9 @@ One row per category; every row carries a number or an explicit assumption.
 - Safety advice (whether to go to a shelter), push notifications to the public, a user-facing app.
 - Predicting targets, strike locations, damage, or anything about air-defence positions.
 - Red/yellow alert levels as a target: alerts.in.ua exposes them only for current alerts, so we start collecting them in Lab 2 but do not model them yet.
-- Threat-type forecast for a window (drones vs missiles) — **stretch goal (M3)** after the Telegram label quality is verified.
 - Weather features (rejected with evidence, see 7.1).
+
+**Conditional scope:** the threat-type forecast (M3) is in scope, but depends on Telegram type labels being reliable. **Assumption:** at least 80% of Kyiv alerts since 2024 can be matched to an Air Force post with a recognised threat type; checked in Lab 2. If the check fails, the API returns P(alert) without type probabilities and M3 moves to future work.
 
 ## 5 Methodology
 
@@ -91,6 +94,60 @@ One row per category; every row carries a number or an explicit assumption.
 
 - **M1: probabilistic classification, one row per (issue time, hour ahead).** For issue time *t* ∈ {10:00, 22:00} and lead *h* ∈ {0…11}, predict P(Kyiv under alert ≥ 10 min during hour *t + h*). Window summaries (P(≥ 60 min), expected minutes) are derived from the 12 hourly probabilities. One model serves both issue times; issue time and lead are features.
 - **M2: quantile regression.** At the start of a Kyiv alert, predict the 0.5 and 0.9 quantiles of its duration in minutes.
+- **M3: multiclass classification, conditional on an alert.** For each hour of the M1 window, predict P(type | alert) over three classes: **drones** (Shahed-type and jet drones), **cruise missiles**, **ballistic**. Labels come from Air Force posts matched to each Kyiv alert. Guided bombs (КАБ) do not reach Kyiv and are not a class. At alert start, the observed type from Telegram is an *input* to M2, not a prediction.
+
+**Prediction outputs**
+
+M1 + M3, example for the 22:00 issue. The P(alert) column is what the **baseline** predicts today (2025–26 share of hours with a Kyiv alert, by hour of day); the trained model shifts each hour from these values. The type columns are illustrative until M3 is trained.
+
+| Hour (Kyiv) | P(alert) | Risk | P(drones \| alert) | P(cruise \| alert) | P(ballistic \| alert) |
+|---|---|---|---|---|---|
+| 22–23 | 12% | 🟡 | 0.80 | 0.12 | 0.08 |
+| 23–00 | 18% | 🟡 | 0.82 | 0.11 | 0.07 |
+| 00–01 | 23% | 🔴 | 0.84 | 0.10 | 0.06 |
+| 01–02 | 27% | 🔴 | 0.82 | 0.12 | 0.06 |
+| 02–03 | 23% | 🔴 | 0.75 | 0.17 | 0.08 |
+| 03–04 | 21% | 🔴 | 0.60 | 0.28 | 0.12 |
+| 04–05 | 18% | 🟡 | 0.45 | 0.35 | 0.20 |
+| 05–06 | 15% | 🟡 | 0.40 | 0.30 | 0.30 |
+| 06–07 | 13% | 🟡 | 0.35 | 0.25 | 0.40 |
+| 07–08 | 12% | 🟡 | 0.30 | 0.20 | 0.50 |
+| 08–09 | 8% | 🟢 | 0.25 | 0.15 | 0.60 |
+| 09–10 | 8% | 🟢 | 0.25 | 0.15 | 0.60 |
+
+Window summary: P(≥ 60 min of alert) 0.33 · expected alert-hours 2.0 · P(any drone alert) 0.28 · P(any missile/ballistic alert) 0.10.
+
+Risk bands per hour: 🟢 < 10%, 🟡 10–20%, 🔴 ≥ 20% (the average hour has 11%).
+
+```json
+{
+  "issued_at": "2026-10-24T22:00:00+03:00",
+  "window": {"start": "2026-10-24T22:00:00+03:00", "end": "2026-10-25T10:00:00+03:00"},
+  "hours": [
+    {"hour_start": "2026-10-24T22:00:00+03:00", "p_alert": 0.12, "risk": "elevated",
+     "type_if_alert": {"drones": 0.80, "cruise_missiles": 0.12, "ballistic": 0.08}}
+  ],
+  "summary": {"p_alert_60min": 0.33, "expected_alert_hours": 2.0,
+              "p_any_drones": 0.28, "p_any_missiles_or_ballistic": 0.10},
+  "model_version": {"m1": "m1-hourly@champion:7", "m3": "m3-type@champion:2"},
+  "degraded": false,
+  "disclaimer": "Planning estimate. The official alert always takes precedence."
+}
+```
+
+M2, at the start of a Kyiv alert:
+
+```json
+{
+  "alert_started_at": "2026-10-24T23:41:10+03:00",
+  "threat_type": "drones",
+  "threat_source": {"channel": "kpszsu", "post_id": 90211, "posted_at": "2026-10-24T23:36:02+03:00"},
+  "duration_min": {"p50": 95, "p90": 240},
+  "expected_end": {"p50": "2026-10-25T01:16:00+03:00", "p90": "2026-10-25T03:41:00+03:00"},
+  "model_version": "m2-duration@champion:3",
+  "degraded": false
+}
+```
 
 **Rejected framing: one binary label per night** ("will there be ≥ 60 min of alert in Kyiv tonight?"). It is simpler, but the 60-minute threshold is arbitrary, it says nothing about *when* during the night, and it needs a second model for the day. The hourly framing gives timing, covers day and night with one model, and the window-level answer falls out of it.
 
@@ -125,7 +182,7 @@ One row per category; every row carries a number or an explicit assumption.
 
 - 38% of rows in `official_data_en.csv` are exact duplicates (113,845 rows); Kyiv: 4,141 rows → 2,267 alerts after de-duplication.
 - The official file stopped updating on 2026-09-07 despite "updated daily" → freshness check needed (6.6).
-- Since November 2025 almost all alerts are raion-level (oblast-level rows fell from ~700/month to < 60/month) → features that count "oblasts under alert" changed meaning; this is real drift.
+- Since November 2025 almost all alerts are raion-level (oblast-level rows fell from ~700/month to < 60/month). The raw number of active alert records jumped from 18.7 to 28.9 per hour (Oct → Nov 2025), but after aggregating raions back to oblasts the feature "oblasts under alert" stayed at 6.2–6.4. Aggregation is therefore part of preprocessing, and the raw record count is monitored as an upstream-change signal (6.6).
 - Volunteer data: 8.6% of Kyiv rows have no recorded end and a guessed `+30 min` end (`naive=True`) → excluded from M2 labels.
 - Yearly Kyiv alert counts agree between official and volunteer data within ~5% (2023–2025).
 
@@ -348,19 +405,72 @@ Every component in this table appears in the diagrams of 6.1, and every componen
 
 ### 6.6 Monitoring and alarms
 
-First draft; Lab 4 makes it real. Alerts go to the on-call engineer (author) through Grafana alerting to a Telegram bot and email.
+First draft; Lab 4 makes it real. Labels arrive late (M1 up to 12 h, M2 at alert end, up to ~11 h), so monitoring has four layers, from fastest to slowest. The first three need no labels and are early warnings; only performance proves the model got worse.
 
-| What | Metric | Threshold → action |
+**Measures used**
+
+- **PSI (Population Stability Index)**, numeric features: bin the values, then Σ (current% − reference%) · ln(current% / reference%). 0 = identical distributions.
+- **Jensen–Shannon distance**, categorical distributions and profiles (e.g. share of alerts per hour of day): 0 = identical, 1 = disjoint.
+- **Reference = the champion's training data**, fixed until the next retrain. A rolling reference "learns" the new normal: with a rolling 90-day reference the raion-switch alarm faded after ~5 weeks while the model had not been retrained.
+- **Thresholds are calibrated on the data, not textbook values.** Over 2025–26, normal week-to-week PSI of "oblasts under alert" had median 0.11 and 95th percentile 0.47, so the common 0.2 rule would fire every few weeks. Each drift threshold is the 95th percentile of normal variation, and an alarm needs 2 consecutive daily checks above it.
+
+**1. Data health** (no labels; every minute / every run)
+
+| Signal | Threshold | Severity |
 |---|---|---|
-| Source freshness | age of the newest event per source | alerts.in.ua poll failing > 2 min → page; newest finished alert in the clean table > 2 days old → page (catches a job that re-reads the same partition); Telegram no new posts > 6 h → warn |
-| Batch volume | rows per monthly batch vs trailing 3-month median | outside ±50% → quality gate fails the run |
-| Pipeline health | DAG run status, duration | any failed run → page; M1 not published by issue time + 5 min → page |
-| Input drift | PSI of "oblasts under alert" and of Telegram threat-type mix, 7 days vs training window | PSI > 0.2 → warn and attach Evidently report |
-| Prediction drift | mean predicted hourly probability, mean predicted P90 (7-day vs 30-day) | change > 50% → warn |
-| M1 performance (labels ≤ 12 h) | 30-day rolling Brier vs hour-of-day baseline | worse than baseline 14 days in a row → retrain alert |
-| M2 performance (labels at alert end) | P90 coverage over the last 30 alerts | < 80% → retrain alert |
-| Training–serving skew | distribution of "oblasts under alert" from live snapshots vs reconstructed from history for the same hours | mean difference > 1 oblast → warn |
-| Service | API p95 latency, 5xx rate | p95 > 200 ms or 5xx > 1% over 15 min → page |
+| alerts.in.ua poll failing | > 2 min | 🔴 page |
+| Newest finished alert in the clean table (catches a job that re-reads the same partition) | > 2 days old | 🔴 page |
+| Telegram: no new posts | > 6 h | 🟡 warn |
+| Telegram: share of posts the parser cannot classify | > 20% over 24 h | 🔴 page |
+| Rows per batch vs trailing 3-month median | outside ±50% | quality gate fails the run |
+| DAG runs; M1 published on time | any failed run; not published by issue time + 5 min | 🔴 page |
+| API p95 latency, 5xx rate (15 min) | > 200 ms, > 1% | 🔴 page |
+
+**2. Input drift** (no labels; Evidently, daily)
+
+| Signal | Why | Window vs reference | Threshold (95th pct of normal) | Measured in our data |
+|---|---|---|---|---|
+| Raw active alert records per hour (upstream signal, not a feature) | catches upstream format changes | 7 d | PSI > 0.5 | 0.11 before the raion switch → 0.70 → **1.00** in Nov 2025 |
+| Oblasts under alert, hourly snapshots (main feature of M1, M2) | if its meaning changes, the model misreads every situation | 7 d | PSI > 0.5 | normal: median 0.11, p95 0.47; unchanged by the raion switch thanks to aggregation (6.2 → 6.4 oblasts) |
+| Kyiv alert profile by hour of day | attacks moving in time; backbone of M1 | **30 d** vs prior 180 d (7 d has only ~10 alerts: one week gave JS 0.34 by chance) | JS > 0.13 | normal: median 0.075, p95 0.131 |
+| Telegram threat-type mix (drones / cruise / ballistic posts) | tactics change shows here before alerts change | 7 d | JS, calibrated in Lab 2 once the history is loaded | — |
+| Training–serving skew: oblasts under alert from live snapshots vs rebuilt from history for the same hours | different producers at training and serving | 7 d | mean difference > 1 oblast | — |
+
+All rows: 🟡 warn in the daily digest, with the Evidently report attached.
+
+**3. Prediction drift** (no labels; daily, last 7 d vs last 30 d)
+
+| Signal | Example of what it catches | Threshold |
+|---|---|---|
+| Mean P(alert) per issue time (10:00 / 22:00) | Telegram ingest dies → Telegram features become 0 → forecasts quietly fall toward the baseline | change > 50% → 🟡 warn |
+| Share of 🔴 hours per day | model calls everything high-risk, or nothing | change > 50% → 🟡 warn |
+| Mean predicted P90 (M2) | duration estimates suddenly doubled or halved | change > 50% → 🟡 warn |
+| Mean predicted type mix (M3) | type probabilities collapse to one class | JS > 0.1 → 🟡 warn |
+
+Prediction drift does not mean the model is wrong (the world may have become more dangerous); it means "look now instead of in 12 hours".
+
+**4. Performance** (needs labels)
+
+| Model | Metric | When computed | Threshold | Why this threshold |
+|---|---|---|---|---|
+| M1 | 30-day rolling Brier of the model minus Brier of the hour-of-day baseline on the same hours | at each window end | model worse than baseline **14 days in a row** → 🟠 retrain alert | when attacks increase every forecast's Brier rises, so "still better than the rule?" is the fair test; one bad night is noise |
+| M1 | calibration: observed alert rate per predicted-probability bin | daily | dashboard only | — |
+| M2 | P90 kept: share of the last **30** Kyiv alerts that ended before P90 (~3 weeks at 1.4 alerts/day) | at each alert end | < 80% → 🟠 retrain alert | if the model is fine (true 90%), < 80% in 30 alerts happens 2.6% of the time; if coverage really fell to 75%, it is caught 65% of the time |
+| M3 | multiclass log-loss vs last-month type-mix baseline, last 30 alerts with a known type | when the type is known from Telegram | worse than baseline over 30 alerts → 🟠 retrain alert | same logic as M1 |
+
+**Routing.** Prometheus metrics and Evidently results feed Grafana alert rules → Telegram bot of the on-call engineer (author) + email. 🔴 is sent immediately; 🟡 is batched into one daily digest; 🟠 is sent immediately with the comparison report. Example:
+
+> 🟡 Input drift: raw active alert records — PSI 0.70 (7 d vs training, 2nd day above 0.5). Mean 18.7 → 28.9 records/h. Oblasts under alert unchanged (6.2 → 6.4). M1 Brier 0.093 vs baseline 0.098. Report: `<link>`. Action: check the upstream alert levels.
+
+**Reading the layers together (runbook)**
+
+| Input drift | Performance | Meaning | Action |
+|---|---|---|---|
+| no | OK | all fine | — |
+| yes | OK | the world changed, the model copes (e.g. the raion switch, absorbed by aggregation) | note it, keep watching |
+| yes | worse | real drift | retrain on recent data, compare by rule 5.4, promote; if the challenger loses, `FORCE_BASELINE=true` |
+| no | worse | concept drift: same inputs, new relationship (new tactics) | retrain and look for a new feature, usually from Telegram |
+| data-health 🔴 | any | broken pipeline or source | API serves the baseline with `degraded: true`; fix the source or switch to the backup (volunteer dataset) |
 
 ### 6.7 Cost
 
@@ -395,7 +505,7 @@ The orchestrator and the tracking server dominate the bill, not compute for the 
 | Risk | Mitigation |
 |---|---|
 | Upstream goes stale or disappears (official dataset already stopped on 2026-09-07) | Freshness alarm; volunteer dataset and alerts.in.ua history as secondary sources |
-| Upstream schema or semantics change (Nov 2025 raion switch) | Quality gate on levels and columns; raion-aware aggregation; drift monitoring on "oblasts under alert" |
+| Upstream schema or semantics change (Nov 2025 raion switch) | Quality gate on levels and columns; raion-to-oblast aggregation; drift monitoring on the raw active-record count (PSI reached 1.00 at the switch) |
 | Telegram blocks scraping or changes page markup | Parser smoke test in the quality gate; Telethon with a personal account as fallback |
 | Leakage from Telegram (edited posts, posts written after the event) | Strict `datetime_utc < t` filter; compare history-trained vs live-collected features in Lab 4 |
 | Concept drift: attack tactics change faster than monthly retraining | Daily drift and performance monitoring; on-demand retraining; baseline fallback |
@@ -428,5 +538,5 @@ The orchestrator and the tracking server dominate the bill, not compute for the 
 
 - **Lab 2:** ingestion DAGs for alerts and Telegram into MinIO with DVC versioning, the quality gate, and the baselines and first models for M1 and M2 tracked in MLflow on time-based folds.
 - **Lab 3:** an LLM component that answers "what is the current threat to Kyiv and why does the forecast say so" by retrieving Air Force posts and morning summaries from pgvector, evaluated on a fixed question set with retrieval and answer metrics.
-- **Lab 4:** the API and the poller containerised and deployed on Minikube with health probes, Evidently/Prometheus/Grafana monitoring, and a replayed drift (the November 2025 raion switch) that reaches the on-call engineer.
+- **Lab 4:** the API and the poller containerised and deployed on Minikube with health probes, Evidently/Prometheus/Grafana monitoring, and replayed real drifts that reach the on-call engineer: the November 2025 raion switch (raw-record PSI), the 2025 rise in long night alerts (label shift), and a Telegram format change (unparsed-post share).
 - **Lab 5:** an agent with tools for active alerts, the 12-hour forecast, the duration prediction and post search that answers planning questions, with persisted traces and a ten-task evaluation.
