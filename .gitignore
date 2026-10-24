@@ -218,3 +218,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- project ---
+# raw and processed data are versioned with DVC (Lab 2), never committed to git
+data/
+*.parquet
+*.csv
+# secrets (alerts.in.ua token, Telegram session)
+.env
+*.session

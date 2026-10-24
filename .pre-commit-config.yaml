@@ -1,0 +1,10 @@
+# Runs the same linter as `make lint` and CI: ruff, at the version pinned in uv.lock.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff (make lint)
+        entry: make lint
+        language: system
+        pass_filenames: false
+        always_run: true

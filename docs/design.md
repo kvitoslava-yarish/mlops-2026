@@ -33,17 +33,46 @@ The desired outcome is a planning aid served through a REST API that is measurab
 
 ## 3 Success metrics
 
-Three layers, kept apart. Each has a target or a stated assumption.
+Each prediction is judged on three levels:
 
-| Layer | M1: 12-hour forecast | M2: alert duration |
-|---|---|---|
-| **Business** (decision) | **Warned share:** of 12-hour windows with ≥ 60 min of Kyiv alert, at least **60%** are flagged high-risk in advance while at most **30%** of quiet windows are flagged. **Assumption:** 60/30 is the trade-off a planner accepts; revisited with consumers in Lab 4. Current evidence: history-only GBM reaches 59% at 30%; the hour-of-day baseline cannot separate windows at all (0%). | **P90 kept:** at least **90%** of Kyiv alerts end before the predicted P90, **and** the median predicted P90 is narrower than the baseline's 224 min (last-12-months P90). |
-| **Model** (offline) | **Brier score** on hourly probabilities (optimising). **AUC ≥ 0.60** on hourly labels (satisficing). Baselines on the 2026-03…2026-09 hold-out: hour-of-day climatology Brier 0.0981 / AUC 0.578. | **Pinball loss** at q = 0.5 and q = 0.9 (optimising). **P90 coverage 85–95%** (satisficing). Baseline (last-12-months median): MAE 34.6 min. |
-| **System** | Forecast published **≤ 5 min** after 10:00 / 22:00. Feature freshness at issue time: alert map ≤ 30 s old, Telegram ≤ 5 min old. | Prediction available **≤ 60 s (p95)** after the alert starts in the alerts.in.ua feed. API p95 latency ≤ 200 ms. |
+- **Business:** did the user get information they can act on?
+- **Model:** how accurate are the predictions, measured offline on the hold-out period (2026-03-01 … 2026-09-05)?
+- **System:** did the prediction arrive on time?
 
-**M3 (threat type, part of the M1 output):** model metric = multiclass log-loss of the type probabilities (optimising), compared with a baseline that always predicts last month's type mix; no separate business metric.
+**Main** metrics are the ones we try to improve (lower is better). **Guardrails** only have to stay above or below a threshold.
 
-Optimising vs satisficing: Brier, pinball loss and log-loss are minimised; AUC, P90 coverage, freshness and latency only have to clear their thresholds.
+### M1: probability that an alert starts in each of the next 12 hours
+
+| Level | Metric — what it means | Target | Today |
+|---|---|---|---|
+| Business (main) | **F1 with ±1 h tolerance.** Hours with P(start) above a threshold are flagged "high risk" (threshold tuned on the validation period 2025-09 … 2026-02, then frozen). An alert counts as **caught** if its start hour or the hour before was flagged; a flagged hour counts as **correct** if an alert started in it or in the next hour. Precision = correct flags / all flags; recall = caught alerts / all alerts; F1 = 2·P·R / (P + R). The tolerance means "we said 00:00, it started at 23:58" is a hit. | above the baseline (0.25) **(assumption: ≥ 0.30 with Telegram features)** | baseline 0.25 (P 0.18, R 0.41) · first model 0.27 (P 0.17, R 0.65) |
+| Model (main) | **Brier score.** For every hour: (predicted probability − what happened)², where what happened is 1 if an alert started in that hour and 0 if not; then averaged. 0 is perfect; lower is better. | below the baseline | baseline 0.0695 · first model 0.0687 |
+| Model (guardrail) | **AUC.** How well the model ranks hours where an alert started above quiet hours. 0.5 = random, 1 = perfect. | ≥ 0.60 | baseline 0.57 · first model 0.58 |
+| Model (dashboard) | **Calibration.** Of all hours where we said ≈ 10%, did an alert start in ≈ 10% of them? | chart, no threshold | — |
+| System (guardrail) | **Forecast on time.** Delay between 10:00 / 22:00 and the forecast being available in the API | ≤ 5 min | — |
+
+### M2: duration of an alert that has just started
+
+The model gives two numbers: P50 ("typically ends by") and P90 ("almost surely ends by").
+
+| Level | Metric — what it means | Target | Today |
+|---|---|---|---|
+| Business (main) | **P50 within ±15 min.** Share of alerts where the "typically ends by" time was within 15 min of the real end. | ≥ 55% **(assumption)** | baseline 47% |
+| Business (guardrail) | **P90 kept.** Share of alerts that ended before our "almost surely ends by" time. Much higher than 90% means P90 is too cautious. | 85–95% | baseline 97% |
+| Business (guardrail) | **P90 width.** Median P90 in minutes. The baseline always says 224 min: safe, but tells the user little. | < 224 min | baseline 224 min |
+| Model (main) | **Pinball loss** for P50 and P90: one number that balances "kept" against "short". It punishes an end time that is too early harder than one that is too late. Lower is better. Example: "P90 by hour of day" is much shorter (133 min) but kept less often (88%), and scores the same 20.9 as the 12-month baseline, so neither "always kept" nor "always short" wins on its own. | below the baseline on both | baseline 17.3 (P50) / 20.9 (P90) |
+| Model (reference) | **MAE of P50**: average minutes off, for readability | below the baseline | baseline 34.6 min |
+| System (guardrail) | **Time from alert start to prediction** (95% of alerts) | ≤ 60 s | — |
+| System (guardrail) | **API response time** (95% of requests) | ≤ 200 ms | — |
+
+M2 results are also reported separately by threat type (drones vs ballistic) and by night vs day: hold-out durations have median 29 min, 29% are under 20 min and 5% over 3 h, so one average hides very different cases. Alerts that start < 15 min after the previous one ended (3.2%) are kept as separate alerts, as the siren shows them, and reported as their own group. Volunteer rows with a guessed end time (`naive=True`) are excluded from M2 labels.
+
+### M3: threat type, if an alert happens (drones / cruise missiles / ballistic)
+
+| Level | Metric — what it means | Target | Today |
+|---|---|---|---|
+| Business (main) | **Macro-F1 over the three types.** F1 computed per type, then averaged, so rare types (ballistic) count as much as drones. 0 to 1, higher is better. | above the baseline that always predicts the most common type **(assumption: +0.10)** | measured in Lab 2 |
+| Model (main) | **Log-loss.** Penalty that grows when the model is confident and wrong. Lower is better. | below the baseline, which always predicts last month's type mix | measured in Lab 2 |
 
 ## 4 Requirements and constraints
 
@@ -52,7 +81,7 @@ Optimising vs satisficing: Brier, pinball loss and log-loss are minimised; AUC, 
 | # | Requirement |
 |---|---|
 | F1 | **Inputs:** finished Kyiv and Ukraine-wide alert intervals (history and monthly), currently active alerts (polled every 20 s), Air Force Telegram posts (scraped every 2 min). |
-| F2 | **M1 + M3 output:** at 10:00 and 22:00 Kyiv time, for the next 12 hours: 12 hourly probabilities that Kyiv is under alert for ≥ 10 min of that hour, a risk band per hour, the threat-type probabilities if an alert happens, window summary (P(≥ 60 min of alert), expected alert-hours, P(any drone alert), P(any missile/ballistic alert)), `model_version`, `issued_at`, `degraded` flag. Format in 5.1. |
+| F2 | **M1 + M3 output:** at 10:00 and 22:00 Kyiv time, for the next 12 hours: 12 hourly probabilities that a Kyiv alert starts in that hour, a risk band per hour, the threat-type probabilities if an alert happens, window summary (P(at least one alert starts), expected number of alerts, P(any drone alert), P(any missile/ballistic alert)), `model_version`, `issued_at`, `degraded` flag. Format in 5.1. |
 | F3 | **M2 output:** when a Kyiv alert starts: predicted duration P50 and P90 in minutes, threat type used, `model_version`, `alert_started_at`, `degraded` flag. |
 | F4 | **Who calls:** any API client, read-only: `GET /v1/forecast/latest`, `GET /v1/alert/current`, `GET /v1/health`. The internal `POST /v1/predict/duration` is called only by the alerts poller inside the cluster. |
 | F5 | **Fallback:** if a model, a feature or a data source is unavailable, the API returns the baseline prediction with `degraded: true` instead of an error. |
@@ -86,48 +115,59 @@ One row per category; every row carries a number or an explicit assumption.
 - Red/yellow alert levels as a target: alerts.in.ua exposes them only for current alerts, so we start collecting them in Lab 2 but do not model them yet.
 - Weather features (rejected with evidence, see 7.1).
 
-**Conditional scope:** the threat-type forecast (M3) is in scope, but depends on Telegram type labels being reliable. **Assumption:** at least 80% of Kyiv alerts since 2024 can be matched to an Air Force post with a recognised threat type; checked in Lab 2. If the check fails, the API returns P(alert) without type probabilities and M3 moves to future work.
+**Conditional scope:** the threat-type forecast (M3) is in scope, but depends on Telegram type labels being reliable. **Assumption:** at least 80% of Kyiv alerts since 2024 can be matched to an Air Force post with a recognised threat type; checked in Lab 2. If the check fails, the API returns P(start) without type probabilities and M3 moves to future work.
 
 ## 5 Methodology
 
 ### 5.1 Problem statement
 
-- **M1: probabilistic classification, one row per (issue time, hour ahead).** For issue time *t* ∈ {10:00, 22:00} and lead *h* ∈ {0…11}, predict P(Kyiv under alert ≥ 10 min during hour *t + h*). Window summaries (P(≥ 60 min), expected minutes) are derived from the 12 hourly probabilities. One model serves both issue times; issue time and lead are features.
+- **M1: probabilistic classification, one row per (issue time, hour ahead).** For issue time *t* ∈ {10:00, 22:00} and lead *h* ∈ {0…11}, predict P(a Kyiv alert **starts** during hour *t + h*). Window summaries (P(at least one start), expected number of alerts) are derived from the 12 hourly probabilities. One model serves both issue times; issue time and lead are features.
 - **M2: quantile regression.** At the start of a Kyiv alert, predict the 0.5 and 0.9 quantiles of its duration in minutes.
 - **M3: multiclass classification, conditional on an alert.** For each hour of the M1 window, predict P(type | alert) over three classes: **drones** (Shahed-type and jet drones), **cruise missiles**, **ballistic**. Labels come from Air Force posts matched to each Kyiv alert. Guided bombs (КАБ) do not reach Kyiv and are not a class. At alert start, the observed type from Telegram is an *input* to M2, not a prediction.
 
 **Prediction outputs**
 
-M1 + M3, example for the 22:00 issue. The P(alert) column is what the **baseline** predicts today (2025–26 share of hours with a Kyiv alert, by hour of day); the trained model shifts each hour from these values. The type columns are illustrative until M3 is trained.
+M1 + M3, example for the 22:00 issue. The P(start) column is what the **baseline** predicts today (2025–26 share of hours in which a Kyiv alert started, by hour of day); the trained model shifts each hour from these values. The type columns are illustrative until M3 is trained.
 
-| Hour (Kyiv) | P(alert) | Risk | P(drones \| alert) | P(cruise \| alert) | P(ballistic \| alert) |
+| Hour (Kyiv) | P(alert starts) | Risk | P(drones \| alert) | P(cruise \| alert) | P(ballistic \| alert) |
 |---|---|---|---|---|---|
-| 22–23 | 12% | 🟡 | 0.80 | 0.12 | 0.08 |
-| 23–00 | 18% | 🟡 | 0.82 | 0.11 | 0.07 |
-| 00–01 | 23% | 🔴 | 0.84 | 0.10 | 0.06 |
-| 01–02 | 27% | 🔴 | 0.82 | 0.12 | 0.06 |
-| 02–03 | 23% | 🔴 | 0.75 | 0.17 | 0.08 |
-| 03–04 | 21% | 🔴 | 0.60 | 0.28 | 0.12 |
-| 04–05 | 18% | 🟡 | 0.45 | 0.35 | 0.20 |
-| 05–06 | 15% | 🟡 | 0.40 | 0.30 | 0.30 |
-| 06–07 | 13% | 🟡 | 0.35 | 0.25 | 0.40 |
-| 07–08 | 12% | 🟡 | 0.30 | 0.20 | 0.50 |
-| 08–09 | 8% | 🟢 | 0.25 | 0.15 | 0.60 |
-| 09–10 | 8% | 🟢 | 0.25 | 0.15 | 0.60 |
+| 22–23 | 9.3% | 🔴 | 0.80 | 0.12 | 0.08 |
+| 23–00 | 10.1% | 🔴 | 0.82 | 0.11 | 0.07 |
+| 00–01 | 11.9% | 🔴 | 0.84 | 0.10 | 0.06 |
+| 01–02 | 10.8% | 🔴 | 0.82 | 0.12 | 0.06 |
+| 02–03 | 6.4% | 🟡 | 0.75 | 0.17 | 0.08 |
+| 03–04 | 8.2% | 🟡 | 0.60 | 0.28 | 0.12 |
+| 04–05 | 6.2% | 🟡 | 0.45 | 0.35 | 0.20 |
+| 05–06 | 4.7% | 🟢 | 0.40 | 0.30 | 0.30 |
+| 06–07 | 5.1% | 🟡 | 0.35 | 0.25 | 0.40 |
+| 07–08 | 4.4% | 🟢 | 0.30 | 0.20 | 0.50 |
+| 08–09 | 4.2% | 🟢 | 0.25 | 0.15 | 0.60 |
+| 09–10 | 6.7% | 🟡 | 0.25 | 0.15 | 0.60 |
 
-Window summary: P(≥ 60 min of alert) 0.33 · expected alert-hours 2.0 · P(any drone alert) 0.28 · P(any missile/ballistic alert) 0.10.
+Window summary (baseline, 2025–26 nights): P(at least one alert starts) 0.57 · expected number of alerts 0.88 · P(any drone alert) 0.28 · P(any missile/ballistic alert) 0.10 (type values illustrative).
 
-Risk bands per hour: 🟢 < 10%, 🟡 10–20%, 🔴 ≥ 20% (the average hour has 11%).
+Risk bands per hour: 🟢 < 5%, 🟡 5–9%, 🔴 ≥ 9% (the average hour has 6.4%; 🔴 ≈ 1.5× average).
+
+**Why "alert starts in the hour" as the label.** Alerts do not respect hour boundaries: 62% of Kyiv alerts (2025–26) cross at least one. Three definitions were compared on 959 alerts:
+
+| Real alert | "≥ 10 min in hour" | "any minute in hour" | "alert starts in hour" (chosen) |
+|---|---|---|---|
+| 23:58–00:40 | 23h = 0, 00h = 1 | 23h = 1, 00h = 1 | 23h = 1 |
+| 12:55–13:08 (short ballistic) | both 0: the alert disappears | 12h = 1, 13h = 1 | 12h = 1 |
+| share of hours labelled 1 | 11.8% | 14.0% | 6.4% |
+| problem | 4% of alerts vanish (short ones split across two hours) | a 2-minute tail marks a whole hour; long alerts count several times | none: each start falls in exactly one hour |
+
+"Starts in hour" counts every alert exactly once and answers the planning question "can I start something at 14:00?"; how long an hour stays disrupted is M2's job. The boundary case (predicted 00:00, started 23:58) is handled in evaluation by the ±1 h tolerance (section 3).
 
 ```json
 {
   "issued_at": "2026-10-24T22:00:00+03:00",
   "window": {"start": "2026-10-24T22:00:00+03:00", "end": "2026-10-25T10:00:00+03:00"},
   "hours": [
-    {"hour_start": "2026-10-24T22:00:00+03:00", "p_alert": 0.12, "risk": "elevated",
+    {"hour_start": "2026-10-24T22:00:00+03:00", "p_start": 0.093, "risk": "high",
      "type_if_alert": {"drones": 0.80, "cruise_missiles": 0.12, "ballistic": 0.08}}
   ],
-  "summary": {"p_alert_60min": 0.33, "expected_alert_hours": 2.0,
+  "summary": {"p_any_start": 0.57, "expected_alerts": 0.88,
               "p_any_drones": 0.28, "p_any_missiles_or_ballistic": 0.10},
   "model_version": {"m1": "m1-hourly@champion:7", "m3": "m3-type@champion:2"},
   "degraded": false,
@@ -166,7 +206,7 @@ M2, at the start of a Kyiv alert:
 
 **Labels and their delay**
 
-- M1 hourly label: Kyiv under alert ≥ 10 min in that hour → known at the end of the hour; the whole window is labelled 12 h after issue.
+- M1 hourly label: a Kyiv alert started in that hour (1/0) → known at the end of the hour; the whole window is labelled 12 h after issue.
 - M2 label: alert duration → known when the alert ends (median 38 min, P90 161 min, P99 440 min, max 673 min).
 
 **Available at serving time vs training time**
@@ -207,8 +247,8 @@ M2, at the start of a Kyiv alert:
 
 | | Trivial baseline | Rule baseline | Candidate |
 |---|---|---|---|
-| M1 | P(alert hour) by hour of day from training data. Hold-out: Brier 0.0981, AUC 0.578 | Same hour's alert rate over the last 30 days. Hold-out: Brier 0.0984, AUC 0.584 | Gradient-boosted trees (LightGBM / sklearn HistGradientBoosting), later logistic regression for comparison. First history-only version: Brier 0.0946, AUC 0.636 (AUC 0.79 at lead 0 h) |
-| M2 | Last-12-months median and P90 (33 / 224 min). Hold-out MAE 34.6 min, P90 coverage 0.97 | By threat type at start, from Telegram: ballistic → short, drones → long (to be measured in Lab 2) | Quantile gradient boosting (q = 0.5, 0.9). A naive first version scored MAE 45.1 (worse than baseline: drift + raion switch), so features are rebuilt as raion-aware |
+| M1 | P(alert starts) by hour of day from training data. Hold-out: Brier 0.0695, AUC 0.57, F1 ±1 h 0.25 | Same hour's start rate over the last 30 days (Lab 2) | Gradient-boosted trees (LightGBM / sklearn HistGradientBoosting), later logistic regression for comparison. First history-only version: Brier 0.0687, AUC 0.58, F1 ±1 h 0.27. **Predicting when an alert starts from alert history alone barely beats the hour-of-day profile**; Telegram features are the bet to move it |
+| M2 | Last-12-months median and P90 (33 / 224 min). Hold-out: P50 within ±15 min 47%, MAE 34.6 min, P90 kept 97%, pinball 17.3 / 20.9 | By threat type at start, from Telegram: ballistic → short, drones → long (to be measured in Lab 2) | Quantile gradient boosting (q = 0.5, 0.9). A naive first version scored MAE 45.1 (worse than baseline: drift + raion switch), so features are rebuilt as raion-aware |
 
 **Features and where each value comes from at serving time**
 
@@ -235,8 +275,8 @@ Two features have a serving source different from their training source: "oblast
 - **Split by time, never at random.** Alerts come in waves: consecutive hours and nights are strongly correlated, so a random split puts the same attack into train and test and inflates scores (leakage).
 - **Folds:** expanding window with monthly test folds (train on everything before month *m*, test on month *m*). **Final hold-out:** 2026-03-01 → 2026-08-31, touched once per model family.
 - **As-of discipline:** every feature is computed only from data with timestamp < issue time (M1) or < alert start (M2); Telegram posts filtered by `datetime_utc`.
-- **Offline metrics:** M1 Brier (main), log-loss, AUC, reliability curve, per-lead Brier. M2 pinball loss at 0.5 and 0.9 (main), MAE, P90 coverage.
-- **Comparing a new model with the current one (champion/challenger):** both scored on the same last 3 monthly folds; the challenger must be better on the main metric with a day-level bootstrap 95% interval that excludes zero, must not break any satisficing threshold, and must beat the rule baseline. Then it runs one week in shadow mode (predictions logged, not served) before manual promotion.
+- **Offline metrics:** M1 Brier (main), AUC, F1 with ±1 h tolerance at the validation-tuned threshold, calibration curve, Brier per lead hour. M2 pinball loss at 0.5 and 0.9 (main), P50 within ±15 min, MAE, P90 kept, P90 width, all also split by threat type and night/day. M3 log-loss (main), macro-F1.
+- **Comparing a new model with the current one (champion/challenger):** both scored on the same last 3 monthly folds; the challenger must be better on the main metric with a day-level bootstrap 95% interval that excludes zero, must not break any guardrail, and must beat the rule baseline. Then it runs one week in shadow mode (predictions logged, not served) before manual promotion.
 
 ### 5.5 Human in the loop
 
@@ -442,7 +482,7 @@ All rows: 🟡 warn in the daily digest, with the Evidently report attached.
 
 | Signal | Example of what it catches | Threshold |
 |---|---|---|
-| Mean P(alert) per issue time (10:00 / 22:00) | Telegram ingest dies → Telegram features become 0 → forecasts quietly fall toward the baseline | change > 50% → 🟡 warn |
+| Mean P(start) per issue time (10:00 / 22:00) | Telegram ingest dies → Telegram features become 0 → forecasts quietly fall toward the baseline | change > 50% → 🟡 warn |
 | Share of 🔴 hours per day | model calls everything high-risk, or nothing | change > 50% → 🟡 warn |
 | Mean predicted P90 (M2) | duration estimates suddenly doubled or halved | change > 50% → 🟡 warn |
 | Mean predicted type mix (M3) | type probabilities collapse to one class | JS > 0.1 → 🟡 warn |
@@ -520,6 +560,7 @@ The orchestrator and the tracking server dominate the bill, not compute for the 
 | Alternative | Pros | Cons | Decision and reason |
 |---|---|---|---|
 | **Weather features** (Open-Meteo Previous Runs API, forecast made 24 h earlier, from 2024-01-19) | Free, no key; the 24-h-earlier forecast matches serving exactly | Tested at Kyiv (night window) and at the Tsymbulova launch area (Oryol oblast, 15:00–22:00): univariate AUC 0.46–0.55 in every year; hold-out Brier worse than climatology (0.200–0.208 vs 0.198); no gain when added to history | **Rejected with evidence**: launches are scheduled by the attacker, ordinary weather variation does not predict them |
+| **Hourly label "≥ 10 min of alert in the hour"** or **"any minute in the hour"** | Captures how disrupted an hour is | 62% of alerts cross an hour boundary: with ≥ 10 min, 4% of alerts (short ones split across two hours) vanish; with any minute, a 2-minute tail marks a whole hour and long alerts count several times | **Rejected**: "alert starts in the hour" counts each alert once (5.1); disruption is covered by M2 |
 | **One binary label per night** | Simplest model and metric | Arbitrary 60-min threshold, no timing, needs a separate day model | **Rejected**: hourly framing (5.1) |
 | **Feast** as the feature store | Standard offline/online store, point-in-time joins | ~15 features from two tables; adds a registry, a materialisation job and another service to run on 4 GB | **Rejected for now**: shared feature code over Parquet + PostgreSQL gives the same offline/online split; revisit if features multiply |
 | **Kafka + Spark streaming** for live alerts | True streaming, scalable | ~1.4 Kyiv alerts/day, a 20-s poll is enough; two heavy services for no gain | **Rejected**: polling service |
