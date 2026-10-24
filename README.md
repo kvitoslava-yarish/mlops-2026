@@ -57,6 +57,28 @@ Hold-out 2026-03-01 … 2026-09-05. Thresholds marked *a* are assumptions.
 
 Also reported by threat type and night/day.
 
+**Formulas**
+
+Brier score (M1), over $N$ hours, with $p_i$ the predicted probability that an alert starts in hour $i$ and $y_i = 1$ if one did, else $0$:
+
+```math
+\text{Brier} = \frac{1}{N}\sum_{i=1}^{N} (p_i - y_i)^2
+```
+
+Squared error on the probability, capped at 1 per hour (unlike log-loss, one confident miss cannot dominate). Example: $p = 0.12$, alert started → $(0.12 - 1)^2 = 0.77$.
+
+Pinball loss (M2), for quantile $q$ (0.5 for P50, 0.9 for P90), real duration $y$, predicted $\hat{y}$, averaged over alerts:
+
+```math
+L_q(y, \hat{y}) =
+\begin{cases}
+q\,(y - \hat{y}) & y \ge \hat{y} \quad \text{(lasted longer than predicted)} \\
+(1 - q)\,(\hat{y} - y) & y < \hat{y} \quad \text{(ended earlier)}
+\end{cases}
+```
+
+For P50 this is $0.5\,|y - \hat{y}|$, i.e. half the MAE (34.6 → 17.3). For P90 with $\hat{y} = 240$: ends at 90 → $0.1 \cdot 150 = 15$; lasts 300 → $0.9 \cdot 60 = 54$. Running past P90 costs 9× more per minute, so the score is lowest when about 10% of alerts outlast P90.
+
 **M3**: macro-F1 over the three types (rare types count equally) and log-loss, vs "always the most common type"; measured in Lab 2.
 
 ## What is monitored
