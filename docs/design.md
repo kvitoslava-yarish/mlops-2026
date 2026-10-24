@@ -1,288 +1,216 @@
 # Kyiv air-alert forecasting — design document
 
-Author: Kvitoslava Yarish · Course: KSE Introduction to MLOps and ML System Design, 2026 · Status: Lab 1 (design)
-
-Template: [eugeneyan/ml-design-docs](https://github.com/eugeneyan/ml-design-docs). Section numbers are fixed; later labs revise sections by these numbers. Items marked **Assumption** are design decisions taken without full information and are revisited in the lab named next to them.
-
----
+KSE MLOps 2026 · Lab 1 · Template: [ml-design-docs](https://github.com/eugeneyan/ml-design-docs). Section numbers are fixed; later labs revise them. **A** = assumption.
 
 ## 1 Overview
 
-Kyiv residents and businesses plan their days and nights around air-raid alerts, but they learn about an alert only when the siren starts and never know how long it will last.
-The system issues a 12-hour forecast twice a day (10:00 and 22:00 Kyiv time) with the probability of an alert in each hour of the window and the likely threat type (drones, cruise missiles, ballistic), and predicts the duration of every Kyiv alert (median and 90th percentile) the moment it starts.
-It learns from the public history of air-raid alerts across Ukraine since 2022 and from the Ukrainian Air Force's public Telegram channel, and it retrains as new alerts and posts arrive.
-The desired outcome is a planning aid served through a REST API that is measurably better than simple hour-of-day and recent-history baselines and that notices when attack patterns change; the official alert always takes precedence over the model.
+Kyiv alerts are known only when the siren starts, with no estimate of when the next one comes or how long it lasts.
+The system forecasts twice a day (10:00, 22:00) the probability that a Kyiv alert starts in each of the next 12 hours, with the likely threat type, and predicts the duration (P50, P90) of every Kyiv alert when it starts.
+It learns from the public alert history of all Ukraine since 2022 and the Ukrainian Air Force Telegram channel, retrains monthly and monitors drift daily.
+Predictions are served by a REST API for planning only; the official alert always takes precedence.
 
 ## 2 Motivation
 
-**Why a system and not a notebook.** Alert patterns are not stationary. In our data, the share of nights with at least 60 minutes of alert in Kyiv moved from 21% (2023) to 41% (2025) and back to 29% (2026), the median alert got shorter (55 → 30 min), and in November 2025 alerts across Ukraine switched from oblast-level to raion-level announcements. A model fitted once in a notebook is wrong within months. The value comes from re-ingesting new alerts every day, retraining on a schedule, and detecting when the inputs change.
+**What the system predicts**
 
-**Who consumes the predictions, and how often.**
+| | Question it answers | When it runs | Output | Ground truth (label) and when it is known |
+|---|---|---|---|---|
+| **M1** start risk | "In which of the next 12 hours is a Kyiv alert likely to **start**?" | 10:00 (covers 10–22) and 22:00 (covers 22–10) | 12 probabilities, one per hour, + risk band 🟢 / 🟡 / 🔴 | 1 if a Kyiv alert started in that hour, else 0 — known at the end of the hour |
+| **M3** threat type | "If an alert comes in that hour, what is it likely to be?" | together with M1 | per hour: P(drones), P(cruise missiles), P(ballistic) | type of the alert, read from Air Force Telegram posts |
+| **M2** duration | "This alert just started — when will it end?" | at the start of every Kyiv alert | **P50** = typically ends by (half of such alerts end earlier) · **P90** = almost surely ends by (9 of 10 end earlier) | actual duration — known when the alert ends |
 
-| Prediction | Consumer | Frequency |
-|---|---|---|
-| M1: 12-hour hourly alert probabilities | API clients: a planning app or bot (later), the Lab 5 agent | twice a day (10:00, 22:00), read many times |
-| M2: duration of the current alert (P50, P90) | same API clients | at every Kyiv alert start, about 1.4 times a day (511 alerts in 2025) |
+Example: at 22:00 the forecast says 00–01 h has an 11.9% chance that an alert starts (🔴, above the 6.4% average hour), and if one starts it is most likely drones (0.84). An alert then starts at 23:41 after an Air Force drone post; M2 returns P50 = 95 min and P90 = 240 min, i.e. "typically over by 01:16, almost surely by 03:41".
 
-**What happens when they are wrong.**
+**Why a system, not a notebook**
 
-- M1 says low risk and a long night alert happens: a user who planned around the forecast is disrupted (meeting, delivery, sleep). Cost is inconvenience, not safety, because the siren still sounds.
-- M1 says high risk and nothing happens: users over-prepare; repeated false alarms erode trust and people stop using the forecast.
-- M2 P90 is too short: a user leaves shelter planning too early or schedules something that gets interrupted. This is the more harmful error, so M2 is evaluated on whether P90 is kept, not only on average error.
-- Safety framing: every response states that it is a planning estimate and that the official alert overrides it. The system never advises whether to go to a shelter.
+- **Non-stationary target.** Nights with ≥ 60 min of alert in Kyiv: 21% (2023) → 41% (2025) → 29% (2026). Median alert duration: 55 → 30 min. Nov 2025: alerts switched from oblast to raion level. A one-off model is stale within months.
+- **Consumers:** API clients (later a planning bot; the Lab 5 agent). M1: 2 forecasts/day. M2: ~1.4 predictions/day (511 Kyiv alerts in 2025).
+- **Cost of errors:** a missed start → disrupted plan; frequent false alarms → forecast ignored; P90 too short → user resumes activity too early (worst case, so M2 is judged on whether P90 holds, not only on average error).
 
 ## 3 Success metrics
 
-Each prediction is judged on three levels:
+Hold-out 2026-03-01 … 2026-09-05. Baseline = the simplest rule a model must beat. **Main** = metric we optimise; **guardrail** = must only stay within its limit. Formulas in [README](../README.md#how-predictions-are-scored).
 
-- **Business:** did the user get information they can act on?
-- **Model:** how accurate are the predictions, measured offline on the hold-out period (2026-03-01 … 2026-09-05)?
-- **System:** did the prediction arrive on time?
+**M1 — is the hourly start probability good?** Scored on 4,536 hold-out hours; an alert started in 7.5% of them. Baseline = average start rate for that hour of day.
 
-**Main** metrics are the ones we try to improve (lower is better). **Guardrails** only have to stay above or below a threshold.
+| Level | Metric | What it checks | Target | Baseline | First model |
+|---|---|---|---|---|---|
+| Model (main) | Brier = mean (p − y)² over hours | probabilities close to what happened (y = 1 start, 0 none); lower is better | < baseline | 0.0695 | 0.0687 |
+| Model (guardrail) | AUC | start hours get higher p than quiet hours; 0.5 = random | ≥ 0.60 | 0.57 | 0.58 |
+| Business | F1 with ±1 h tolerance¹ | if we flag "high risk" hours, how many real starts we catch and how many flags are right | ≥ 0.30 **A** | 0.25 | 0.27 |
+| System | publish delay | forecast available after 10:00 / 22:00 | ≤ 5 min | — | — |
 
-### M1: probability that an alert starts in each of the next 12 hours
+¹ Hours with p ≥ threshold are flagged (threshold tuned on 2025-09 … 2026-02, then frozen). A start is *caught* if its hour or the hour before was flagged; a flag is *correct* if a start fell in that hour or the next, so "flagged 00:00, started 23:58" is a hit. F1 = 2·P·R / (P + R).
 
-| Level | Metric — what it means | Target | Today |
-|---|---|---|---|
-| Business (main) | **F1 with ±1 h tolerance.** Hours with P(start) above a threshold are flagged "high risk" (threshold tuned on the validation period 2025-09 … 2026-02, then frozen). An alert counts as **caught** if its start hour or the hour before was flagged; a flagged hour counts as **correct** if an alert started in it or in the next hour. Precision = correct flags / all flags; recall = caught alerts / all alerts; F1 = 2·P·R / (P + R). The tolerance means "we said 00:00, it started at 23:58" is a hit. | above the baseline (0.25) **(assumption: ≥ 0.30 with Telegram features)** | baseline 0.25 (P 0.18, R 0.41) · first model 0.27 (P 0.17, R 0.65) |
-| Model (main) | **Brier score.** For every hour: (predicted probability − what happened)², where what happened is 1 if an alert started in that hour and 0 if not; then averaged. 0 is perfect; lower is better. | below the baseline | baseline 0.0695 · first model 0.0687 |
-| Model (guardrail) | **AUC.** How well the model ranks hours where an alert started above quiet hours. 0.5 = random, 1 = perfect. | ≥ 0.60 | baseline 0.57 · first model 0.58 |
-| Model (dashboard) | **Calibration.** Of all hours where we said ≈ 10%, did an alert start in ≈ 10% of them? | chart, no threshold | — |
-| System (guardrail) | **Forecast on time.** Delay between 10:00 / 22:00 and the forecast being available in the API | ≤ 5 min | — |
+**M2 — are the duration estimates accurate and reliable?** Scored on 349 hold-out alerts. Baseline = always the last-12-months median and P90 (33 / 224 min).
 
-### M2: duration of an alert that has just started
+| Level | Metric | What it checks | Target | Baseline |
+|---|---|---|---|---|
+| Model (main) | pinball loss, q = 0.5 / 0.9 | error of P50 and P90 in minutes; running past P90 costs 9× more than ending early; lower is better | < baseline | 17.3 / 20.9 |
+| Business | P50 within ±15 min | share of alerts where "typically ends by" was ≤ 15 min off | ≥ 55% **A** | 47% |
+| Business (guardrail) | P90 kept | share of alerts that ended before "almost surely ends by" | 85–95% | 97% |
+| Business (guardrail) | P90 width | median P90 in minutes; shorter = more useful | < 224 min | 224 min |
+| System | alert start → prediction (p95) | M2 arrives in time to be useful | ≤ 60 s | — |
+| System | API latency (p95) | | ≤ 200 ms | — |
 
-The model gives two numbers: P50 ("typically ends by") and P90 ("almost surely ends by").
+Why pinball is the main metric: "P90 by hour of day" is shorter (133 min) but kept less often (88%) and scores the same 20.9 as the baseline, so neither "always safe" nor "always short" wins. Results are also split by threat type and night/day (hold-out median 29 min, 29% < 20 min, 5% > 3 h).
 
-| Level | Metric — what it means | Target | Today |
-|---|---|---|---|
-| Business (main) | **P50 within ±15 min.** Share of alerts where the "typically ends by" time was within 15 min of the real end. | ≥ 55% **(assumption)** | baseline 47% |
-| Business (guardrail) | **P90 kept.** Share of alerts that ended before our "almost surely ends by" time. Much higher than 90% means P90 is too cautious. | 85–95% | baseline 97% |
-| Business (guardrail) | **P90 width.** Median P90 in minutes. The baseline always says 224 min: safe, but tells the user little. | < 224 min | baseline 224 min |
-| Model (main) | **Pinball loss** for P50 and P90: one number that balances "kept" against "short". It punishes an end time that is too early harder than one that is too late. Lower is better. Example: "P90 by hour of day" is much shorter (133 min) but kept less often (88%), and scores the same 20.9 as the 12-month baseline, so neither "always kept" nor "always short" wins on its own. | below the baseline on both | baseline 17.3 (P50) / 20.9 (P90) |
-| Model (reference) | **MAE of P50**: average minutes off, for readability | below the baseline | baseline 34.6 min |
-| System (guardrail) | **Time from alert start to prediction** (95% of alerts) | ≤ 60 s | — |
-| System (guardrail) | **API response time** (95% of requests) | ≤ 200 ms | — |
-
-M2 results are also reported separately by threat type (drones vs ballistic) and by night vs day: hold-out durations have median 29 min, 29% are under 20 min and 5% over 3 h, so one average hides very different cases. Alerts that start < 15 min after the previous one ended (3.2%) are kept as separate alerts, as the siren shows them, and reported as their own group. Volunteer rows with a guessed end time (`naive=True`) are excluded from M2 labels.
-
-### M3: threat type, if an alert happens (drones / cruise missiles / ballistic)
-
-| Level | Metric — what it means | Target | Today |
-|---|---|---|---|
-| Business (main) | **Macro-F1 over the three types.** F1 computed per type, then averaged, so rare types (ballistic) count as much as drones. 0 to 1, higher is better. | above the baseline that always predicts the most common type **(assumption: +0.10)** | measured in Lab 2 |
-| Model (main) | **Log-loss.** Penalty that grows when the model is confident and wrong. Lower is better. | below the baseline, which always predicts last month's type mix | measured in Lab 2 |
+**M3 — is the threat type right?** Scored on alerts with a known type. Macro-F1 = F1 per type, averaged, so rare ballistic alerts count as much as drones (target: "always the most common type" + 0.10 **A**); log-loss of the probabilities (target: below "last month's type mix"). Measured in Lab 2.
 
 ## 4 Requirements and constraints
 
-### 4.1 Functional requirements
+### 4.1 Functional
 
 | # | Requirement |
 |---|---|
-| F1 | **Inputs:** finished Kyiv and Ukraine-wide alert intervals (history and monthly), currently active alerts (polled every 20 s), Air Force Telegram posts (scraped every 2 min). |
-| F2 | **M1 + M3 output:** at 10:00 and 22:00 Kyiv time, for the next 12 hours: 12 hourly probabilities that a Kyiv alert starts in that hour, a risk band per hour, the threat-type probabilities if an alert happens, window summary (P(at least one alert starts), expected number of alerts, P(any drone alert), P(any missile/ballistic alert)), `model_version`, `issued_at`, `degraded` flag. Format in 5.1. |
-| F3 | **M2 output:** when a Kyiv alert starts: predicted duration P50 and P90 in minutes, threat type used, `model_version`, `alert_started_at`, `degraded` flag. |
-| F4 | **Who calls:** any API client, read-only: `GET /v1/forecast/latest`, `GET /v1/alert/current`, `GET /v1/health`. The internal `POST /v1/predict/duration` is called only by the alerts poller inside the cluster. |
-| F5 | **Fallback:** if a model, a feature or a data source is unavailable, the API returns the baseline prediction with `degraded: true` instead of an error. |
-| F6 | **Labels:** every prediction is joined with its outcome once known (window end for M1, alert end for M2) and stored for monitoring and retraining. |
+| F1 | Inputs: finished alert intervals (all oblasts), active alerts (poll 20 s), Air Force Telegram posts (scrape 2 min) |
+| F2 | M1 + M3 at 10:00 and 22:00: 12 × {P(start), risk band, P(type \| alert)} + window summary |
+| F3 | M2 at each Kyiv alert start: P50, P90, threat type used |
+| F4 | Read API: `GET /v1/forecast/latest`, `/v1/alert/current`, `/v1/health`. Internal: `POST /v1/predict/duration` (poller only) |
+| F5 | Every response: `model_version`, `issued_at`, `degraded`. Fallback to baseline with `degraded: true`, never an error |
+| F6 | Predictions joined with labels when known; stored for monitoring and retraining |
 
-### 4.2 Non-functional requirements
-
-One row per category; every row carries a number or an explicit assumption.
+### 4.2 Non-functional
 
 | Category | Requirement |
 |---|---|
-| **Freshness** | M1 published ≤ 5 min after issue time. Active-alert state ≤ 30 s old (20 s poll). Telegram posts ingested ≤ 5 min after publication (2-min scrape). Finished-alert labels ingested monthly for training (alerts.in.ua `month_ago`), daily for monitoring. |
-| **Latency and throughput** | API p95 ≤ 200 ms (reads precomputed rows). M2 end-to-end ≤ 60 s p95 from alert start. Load: **Assumption** ≤ 10 requests/s peak (single consumer and demo); about 2 M1 runs and ~1.4 M2 predictions per day. External limits: alerts.in.ua ≤ 8 requests/min (hard limit 12/min; history endpoint 2/min). |
-| **Availability and fallback** | **Assumption:** 99% monthly availability on the local Minikube deployment (laptop may sleep). Fallback per F5: hour-of-day climatology for M1, last-12-months median/P90 for M2. If alerts.in.ua is unreachable for > 2 min, M2 is marked `degraded` and `/v1/health` reports the stale source. |
-| **Reproducibility** | Every registered model is traceable to a DVC data version, a git commit and its parameters in MLflow; re-running training with the same data version and commit gives identical metrics (fixed seeds). The environment is pinned with `uv.lock`; `make setup` rebuilds it from a clean clone. |
-| **Adaptability** | New month of alerts and posts is ingested by one DAG run. Retraining is monthly on an expanding window, plus on demand when monitoring fires. A new model or feature enters as `challenger` and is promoted only by the rule in 5.4. |
-| **Observability without ground truth** | Labels arrive late: up to 12 h for M1 (window end) and up to ~11 h for M2 (longest alert 673 min; P99 440 min). Before labels arrive we monitor input drift (oblasts-under-alert distribution, Telegram threat-type mix and post volume), prediction drift (mean predicted probability, mean predicted P90) and data freshness. |
-| **Cost and resource ceilings** | Local: laptop with Minikube at 4 GB RAM (course reference), no GPU. Cloud: estimated in 6.7, **Assumption** ceiling $200/month for the self-hosted-on-Kubernetes variant. External: free tiers only (alerts.in.ua token, public Telegram preview). |
+| Freshness | M1 ≤ 5 min after issue; alert state ≤ 30 s; Telegram ≤ 5 min; labels daily (monitoring), monthly (training) |
+| Latency, throughput | API p95 ≤ 200 ms; M2 ≤ 60 s p95; ≤ 10 req/s **A**; alerts.in.ua ≤ 8 req/min (hard limit 12) |
+| Availability, fallback | 99%/month on Minikube **A**; baseline fallback; alerts.in.ua down > 2 min → M2 `degraded` |
+| Reproducibility | model ↔ DVC data version + git commit + params in MLflow; same inputs → same metrics (fixed seeds); `uv.lock` |
+| Adaptability | monthly retrain on expanding window + on alarm; new model enters as `challenger` (5.4) |
+| Observability without labels | labels lag ≤ 12 h (M1), ≤ ~11 h (M2, max alert 673 min); until then: input drift, prediction drift, freshness (6.6) |
+| Cost, resources | laptop, Minikube 4 GB, no GPU; cloud variant ≤ $200/month **A** (6.7) |
 
-### 4.3 In scope
+### 4.3 Scope
 
-- Kyiv City only (other oblasts are inputs, not targets).
-- M1 (12-hour hourly forecast at 10:00 and 22:00) and M2 (duration at alert start).
-- Data from two sources: air-alert data (dataset + alerts.in.ua API) and the Air Force Telegram channel.
-- REST API as the only consumer interface.
-
-### 4.4 Out of scope
-
-- Safety advice (whether to go to a shelter), push notifications to the public, a user-facing app.
-- Predicting targets, strike locations, damage, or anything about air-defence positions.
-- Red/yellow alert levels as a target: alerts.in.ua exposes them only for current alerts, so we start collecting them in Lab 2 but do not model them yet.
-- Weather features (rejected with evidence, see 7.1).
-
-**Conditional scope:** the threat-type forecast (M3) is in scope, but depends on Telegram type labels being reliable. **Assumption:** at least 80% of Kyiv alerts since 2024 can be matched to an Air Force post with a recognised threat type; checked in Lab 2. If the check fails, the API returns P(start) without type probabilities and M3 moves to future work.
+- **In:** Kyiv City; M1, M2, M3 (M3 conditional: ≥ 80% of Kyiv alerts must match a typed Air Force post, **A**, checked in Lab 2); REST API.
+- **Out:** safety advice, push notifications, red/yellow alert level as target (no history; collected from Lab 2), strike locations or air-defence data, weather (7.1).
 
 ## 5 Methodology
 
 ### 5.1 Problem statement
 
-- **M1: probabilistic classification, one row per (issue time, hour ahead).** For issue time *t* ∈ {10:00, 22:00} and lead *h* ∈ {0…11}, predict P(a Kyiv alert **starts** during hour *t + h*). Window summaries (P(at least one start), expected number of alerts) are derived from the 12 hourly probabilities. One model serves both issue times; issue time and lead are features.
-- **M2: quantile regression.** At the start of a Kyiv alert, predict the 0.5 and 0.9 quantiles of its duration in minutes.
-- **M3: multiclass classification, conditional on an alert.** For each hour of the M1 window, predict P(type | alert) over three classes: **drones** (Shahed-type and jet drones), **cruise missiles**, **ballistic**. Labels come from Air Force posts matched to each Kyiv alert. Guided bombs (КАБ) do not reach Kyiv and are not a class. At alert start, the observed type from Telegram is an *input* to M2, not a prediction.
+| | Task | Unit | Label |
+|---|---|---|---|
+| M1 | binary classification, probabilistic | (issue time ∈ {10, 22}, lead 0–11 h) → one model for both | a Kyiv alert **started** in the hour |
+| M2 | quantile regression, q = 0.5, 0.9 | one Kyiv alert, at start | duration, minutes |
+| M3 | multiclass, conditional on alert | same rows as M1 | drones / cruise missiles / ballistic, from Air Force posts (guided bombs don't reach Kyiv) |
 
-**Prediction outputs**
+**Hour label.** 62% of Kyiv alerts (2025–26, n = 959) cross an hour boundary.
 
-M1 + M3, example for the 22:00 issue. The P(start) column is what the **baseline** predicts today (2025–26 share of hours in which a Kyiv alert started, by hour of day); the trained model shifts each hour from these values. The type columns are illustrative until M3 is trained.
-
-| Hour (Kyiv) | P(alert starts) | Risk | P(drones \| alert) | P(cruise \| alert) | P(ballistic \| alert) |
-|---|---|---|---|---|---|
-| 22–23 | 9.3% | 🔴 | 0.80 | 0.12 | 0.08 |
-| 23–00 | 10.1% | 🔴 | 0.82 | 0.11 | 0.07 |
-| 00–01 | 11.9% | 🔴 | 0.84 | 0.10 | 0.06 |
-| 01–02 | 10.8% | 🔴 | 0.82 | 0.12 | 0.06 |
-| 02–03 | 6.4% | 🟡 | 0.75 | 0.17 | 0.08 |
-| 03–04 | 8.2% | 🟡 | 0.60 | 0.28 | 0.12 |
-| 04–05 | 6.2% | 🟡 | 0.45 | 0.35 | 0.20 |
-| 05–06 | 4.7% | 🟢 | 0.40 | 0.30 | 0.30 |
-| 06–07 | 5.1% | 🟡 | 0.35 | 0.25 | 0.40 |
-| 07–08 | 4.4% | 🟢 | 0.30 | 0.20 | 0.50 |
-| 08–09 | 4.2% | 🟢 | 0.25 | 0.15 | 0.60 |
-| 09–10 | 6.7% | 🟡 | 0.25 | 0.15 | 0.60 |
-
-Window summary (baseline, 2025–26 nights): P(at least one alert starts) 0.57 · expected number of alerts 0.88 · P(any drone alert) 0.28 · P(any missile/ballistic alert) 0.10 (type values illustrative).
-
-Risk bands per hour: 🟢 < 5%, 🟡 5–9%, 🔴 ≥ 9% (the average hour has 6.4%; 🔴 ≈ 1.5× average).
-
-**Why "alert starts in the hour" as the label.** Alerts do not respect hour boundaries: 62% of Kyiv alerts (2025–26) cross at least one. Three definitions were compared on 959 alerts:
-
-| Real alert | "≥ 10 min in hour" | "any minute in hour" | "alert starts in hour" (chosen) |
+| Alert | ≥ 10 min in hour | any minute in hour | **starts in hour** |
 |---|---|---|---|
 | 23:58–00:40 | 23h = 0, 00h = 1 | 23h = 1, 00h = 1 | 23h = 1 |
-| 12:55–13:08 (short ballistic) | both 0: the alert disappears | 12h = 1, 13h = 1 | 12h = 1 |
-| share of hours labelled 1 | 11.8% | 14.0% | 6.4% |
-| problem | 4% of alerts vanish (short ones split across two hours) | a 2-minute tail marks a whole hour; long alerts count several times | none: each start falls in exactly one hour |
+| 12:55–13:08 | both 0 (alert lost) | 12h = 1, 13h = 1 | 12h = 1 |
+| hours = 1 | 11.8% | 14.0% | 6.4% |
+| issue | 4% of alerts lost | tails and long alerts over-counted | each alert exactly once |
 
-"Starts in hour" counts every alert exactly once and answers the planning question "can I start something at 14:00?"; how long an hour stays disrupted is M2's job. The boundary case (predicted 00:00, started 23:58) is handled in evaluation by the ±1 h tolerance (section 3).
+The 23:58 vs 00:00 boundary case is handled in evaluation by the ±1 h tolerance. Duration is M2's job.
+
+**Rejected:** one binary "long alert tonight" label (arbitrary 60-min threshold, no timing, separate day model); duration buckets for M2 (lose the tail).
+
+**Output, 22:00 issue.** P(start) = current baseline (2025–26 start rate by hour); type values illustrative until M3 is trained. Risk: 🟢 < 5%, 🟡 5–9%, 🔴 ≥ 9% (mean 6.4%).
+
+| Hour | 22 | 23 | 00 | 01 | 02 | 03 | 04 | 05 | 06 | 07 | 08 | 09 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| P(start), % | 9.3 | 10.1 | 11.9 | 10.8 | 6.4 | 8.2 | 6.2 | 4.7 | 5.1 | 4.4 | 4.2 | 6.7 |
+| Risk | 🔴 | 🔴 | 🔴 | 🔴 | 🟡 | 🟡 | 🟡 | 🟢 | 🟡 | 🟢 | 🟢 | 🟡 |
+| P(drones \| alert) | .80 | .82 | .84 | .82 | .75 | .60 | .45 | .40 | .35 | .30 | .25 | .25 |
 
 ```json
 {
   "issued_at": "2026-10-24T22:00:00+03:00",
-  "window": {"start": "2026-10-24T22:00:00+03:00", "end": "2026-10-25T10:00:00+03:00"},
-  "hours": [
-    {"hour_start": "2026-10-24T22:00:00+03:00", "p_start": 0.093, "risk": "high",
-     "type_if_alert": {"drones": 0.80, "cruise_missiles": 0.12, "ballistic": 0.08}}
-  ],
-  "summary": {"p_any_start": 0.57, "expected_alerts": 0.88,
-              "p_any_drones": 0.28, "p_any_missiles_or_ballistic": 0.10},
-  "model_version": {"m1": "m1-hourly@champion:7", "m3": "m3-type@champion:2"},
-  "degraded": false,
-  "disclaimer": "Planning estimate. The official alert always takes precedence."
+  "hours": [{"hour_start": "2026-10-24T22:00:00+03:00", "p_start": 0.093, "risk": "high",
+             "type_if_alert": {"drones": 0.80, "cruise_missiles": 0.12, "ballistic": 0.08}}],
+  "summary": {"p_any_start": 0.57, "expected_alerts": 0.88},
+  "model_version": {"m1": "m1@champion:7", "m3": "m3@champion:2"},
+  "degraded": false
 }
 ```
-
-M2, at the start of a Kyiv alert:
 
 ```json
 {
   "alert_started_at": "2026-10-24T23:41:10+03:00",
   "threat_type": "drones",
-  "threat_source": {"channel": "kpszsu", "post_id": 90211, "posted_at": "2026-10-24T23:36:02+03:00"},
+  "threat_source": {"post_id": 90211, "posted_at": "2026-10-24T23:36:02+03:00"},
   "duration_min": {"p50": 95, "p90": 240},
-  "expected_end": {"p50": "2026-10-25T01:16:00+03:00", "p90": "2026-10-25T03:41:00+03:00"},
-  "model_version": "m2-duration@champion:3",
+  "model_version": "m2@champion:3",
   "degraded": false
 }
 ```
 
-**Rejected framing: one binary label per night** ("will there be ≥ 60 min of alert in Kyiv tonight?"). It is simpler, but the 60-minute threshold is arbitrary, it says nothing about *when* during the night, and it needs a second model for the day. The hourly framing gives timing, covers day and night with one model, and the window-level answer falls out of it.
-
-**Also rejected: M2 as classification into duration buckets** (< 30 min, 30–120, > 120). Buckets lose the tail that matters for planning; quantiles keep it.
-
 ### 5.2 Data
-
-**Sources and arrival pattern**
 
 | Source | Content | Arrival | Role |
 |---|---|---|---|
-| [Vadimkin/ukrainian-air-raid-sirens-dataset](https://github.com/Vadimkin/ukrainian-air-raid-sirens-dataset) (MIT), `official_data_en.csv` | All official alerts since 2022-03-15, UTC start/end, oblast/raion/hromada level | Bootstrap once; repo says "updated daily" but our copy ends **2026-09-07** | Training history and labels |
-| Same repo, `volunteer_data_en.csv` | Alerts since 2022-02-25, oblast level, collected from eTryvoga | Current to 2026-10-23 | Cross-check; fills months after 2026-09-07 |
-| [alerts.in.ua API](https://devs.alerts.in.ua/) | Active alerts (`/v1/alerts/active.json`, IoT v2 with red/yellow), last month of finished alerts (`/v1/regions/{uid}/alerts/month_ago.json`) | Active: poll every 20 s. History: monthly batch | Live features (serving), monthly batches and labels going forward |
-| Telegram [@kpszsu](https://t.me/s/kpszsu) (Ukrainian Air Force), public web preview | Short typed posts: emoji + threat type + location + heading (e.g. "🛵 Ударні БпЛА … курсом на …"); morning summaries with counts of drones and missiles | ~10+ posts/hour during attacks; scraped every 2 min; history back-filled from 2024-01-01 | Threat-type features, attack-size features, M2 threat type, Lab 3 corpus |
+| [Vadimkin dataset](https://github.com/Vadimkin/ukrainian-air-raid-sirens-dataset) `official_data_en.csv` (MIT) | all official alerts since 2022-03-15, UTC, oblast / raion / hromada | bootstrap; our copy ends 2026-09-07 | history, labels |
+| same repo `volunteer_data_en.csv` | oblast-level alerts since 2022-02-25 | current (2026-10-23) | cross-check, gap fill |
+| [alerts.in.ua API](https://devs.alerts.in.ua/) | active alerts; last month of finished alerts | poll 20 s; monthly batch | serving features, new batches, labels |
+| Telegram [@kpszsu](https://t.me/s/kpszsu) web preview | typed posts (emoji + threat + location + heading), morning attack summaries | scrape 2 min; back-fill from 2024-01-01 | M1/M3 features, M3 labels, M2 threat type, Lab 3 corpus |
 
-**Labels and their delay**
+**Label delay:** M1 → end of the hour (window fully labelled after 12 h). M2 → end of the alert (median 38, P90 161, P99 440, max 673 min). M3 → first matching post.
 
-- M1 hourly label: a Kyiv alert started in that hour (1/0) → known at the end of the hour; the whole window is labelled 12 h after issue.
-- M2 label: alert duration → known when the alert ends (median 38 min, P90 161 min, P99 440 min, max 673 min).
+**Training vs serving**
 
-**Available at serving time vs training time**
-
-| Information | Training (offline) | Serving (online) |
+| | Training | Serving |
 |---|---|---|
-| Alert intervals | complete start + end from the dataset | only *started* alerts are known; ends arrive later |
-| Oblasts under alert at time *t* | reconstructed from dataset intervals | current snapshot from alerts.in.ua active endpoint (different producer) |
-| Telegram posts | scraped history: **current** (possibly edited) text | text as first published |
-| Alert level red/yellow | not available | available (collected from Lab 2, not used yet) |
+| Alert intervals | complete (start + end) | only starts; ends arrive later |
+| Oblasts under alert at *t* | rebuilt from dataset intervals | alerts.in.ua snapshot (different producer) |
+| Telegram text | scraped history, possibly edited | first-published text |
 
-**Data quality findings (measured, Lab 1)**
+**Quality findings (measured):**
 
-- 38% of rows in `official_data_en.csv` are exact duplicates (113,845 rows); Kyiv: 4,141 rows → 2,267 alerts after de-duplication.
-- The official file stopped updating on 2026-09-07 despite "updated daily" → freshness check needed (6.6).
-- Since November 2025 almost all alerts are raion-level (oblast-level rows fell from ~700/month to < 60/month). The raw number of active alert records jumped from 18.7 to 28.9 per hour (Oct → Nov 2025), but after aggregating raions back to oblasts the feature "oblasts under alert" stayed at 6.2–6.4. Aggregation is therefore part of preprocessing, and the raw record count is monitored as an upstream-change signal (6.6).
-- Volunteer data: 8.6% of Kyiv rows have no recorded end and a guessed `+30 min` end (`naive=True`) → excluded from M2 labels.
-- Yearly Kyiv alert counts agree between official and volunteer data within ~5% (2023–2025).
+- 38% exact duplicate rows (113,845). Kyiv: 4,141 rows → 2,267 alerts after dedup.
+- The official file stopped on 2026-09-07 despite "updated daily".
+- Raion-level since Nov 2025: active records 18.7 → 28.9 per hour, but oblasts under alert unchanged (6.2 → 6.4) after raion → oblast aggregation.
+- 8.6% of volunteer Kyiv rows have a guessed end (`naive=True`) → excluded from M2 labels.
+- Official and volunteer yearly counts agree within ~5% (2023–25).
 
-**Storage formats**
+**Formats:** raw as fetched (CSV / JSON) in MinIO `raw/`, immutable → replayable. Clean and features: Parquet (typed, columnar, fast time scans). Serving: PostgreSQL (point lookups, transactional poller writes).
 
-- Raw layer: exactly as fetched (CSV from GitHub, JSON from alerts.in.ua, CSV parsed from the Telegram preview) in MinIO `raw/`, partitioned by source and date. Raw is never edited, so any bug in preprocessing can be replayed.
-- Clean and feature layers: Parquet in MinIO (columnar, typed, compressed, fast for time-range scans in training).
-- Serving layer: PostgreSQL tables (current alert state, online features, forecasts, predictions joined with labels) because the API needs indexed point lookups and the poller needs transactional writes.
+**Lab checklist**
 
-**Checklist justification (step 1 of the lab)**
-
-| Item | Justification |
+| Item | Answer |
 |---|---|
-| **A time axis** | Every alert has UTC start and end since 2022; every post has a UTC timestamp. Lab 2 ingests "the next month" from alerts.in.ua `month_ago` plus newly scraped posts. Lab 4 can replay real drift: the November 2025 raion switch and the 2025 rise in long night alerts. |
-| **Enough history to hold out a period** | 4.5 years of alerts (2,267 Kyiv alerts; ~1,300 nights). Final hold-out: 2026-03-01 → 2026-08-31 (6 months, 4,536 hourly rows for M1, 349 alerts for M2). Telegram is back-filled from 2024-01-01, so models that use Telegram train on 2024-01 → 2026-02 (26 months). |
-| **Labels with a known arrival delay** | M1: 1–12 h (end of the hour / end of the window). M2: end of the alert, ≤ 11.2 h observed. Both are much shorter than the monthly retraining cycle, so Lab 4 monitors performance on the same day, not a quarter later. |
-| **A text surface** | The Air Force Telegram channel (tens of thousands of posts since 2024) is both a feature source and the Lab 3 retrieval corpus: "what is the current threat to Kyiv and why does the forecast say so?" grounded in recent posts and morning summaries. |
+| Time axis | UTC start/end since 2022; posts timestamped. Monthly batch = alerts.in.ua `month_ago` + new posts. Real drift to replay in Lab 4: raion switch, 2025 rise in long nights |
+| Hold-out | 4.5 years; hold-out 2026-03-01 … 2026-08-31. Telegram models train 2024-01 … 2026-02 |
+| Label delay | 1–12 h (M1), ≤ 11.2 h (M2) |
+| Text surface | Air Force posts + morning summaries → Lab 3 retrieval corpus |
 
 ### 5.3 Techniques
 
-**Baselines first (rule or trivial model), then the candidate.** A candidate is useful only if it beats the rule baseline, not just the trivial one.
-
 | | Trivial baseline | Rule baseline | Candidate |
 |---|---|---|---|
-| M1 | P(alert starts) by hour of day from training data. Hold-out: Brier 0.0695, AUC 0.57, F1 ±1 h 0.25 | Same hour's start rate over the last 30 days (Lab 2) | Gradient-boosted trees (LightGBM / sklearn HistGradientBoosting), later logistic regression for comparison. First history-only version: Brier 0.0687, AUC 0.58, F1 ±1 h 0.27. **Predicting when an alert starts from alert history alone barely beats the hour-of-day profile**; Telegram features are the bet to move it |
-| M2 | Last-12-months median and P90 (33 / 224 min). Hold-out: P50 within ±15 min 47%, MAE 34.6 min, P90 kept 97%, pinball 17.3 / 20.9 | By threat type at start, from Telegram: ballistic → short, drones → long (to be measured in Lab 2) | Quantile gradient boosting (q = 0.5, 0.9). A naive first version scored MAE 45.1 (worse than baseline: drift + raion switch), so features are rebuilt as raion-aware |
+| M1 | start rate by hour of day: Brier 0.0695, F1 0.25 | same-hour start rate, last 30 days | GBM (LightGBM / HistGradientBoosting). History-only: Brier 0.0687, F1 0.27 — barely better; Telegram features are the bet |
+| M2 | last-12-months P50 / P90: pinball 17.3 / 20.9 | by threat type at start (ballistic short, drones long) — Lab 2 | quantile GBM. Naive version: MAE 45.1 (worse; drift + raion switch) |
+| M3 | most common type / last month's mix | type by hour of day | multiclass GBM |
 
-**Features and where each value comes from at serving time**
+**Features** (one `features.py` for offline and online)
 
 | Feature | Model | Training source | Serving source |
 |---|---|---|---|
-| hour of day, lead, issue time, day of week, holiday flag | M1 | computed from timestamp | computed from timestamp |
-| moon illumination | M1 | astronomical formula | same formula |
-| Kyiv alert rate in the same hour, last 30 days | M1 | clean alert table (Parquet) | same feature code on PostgreSQL alert table |
-| Kyiv alert minutes in the previous window | M1 | clean alert table | PostgreSQL alert table |
-| days since last massive night (≥ 180 min of alert) | M1 | clean alert table | PostgreSQL alert table |
-| Kyiv currently under alert | M1 | reconstructed from intervals at *t* | poller state (alerts.in.ua active) |
-| **number of oblasts under alert now** (raion alerts aggregated to oblast) | M1, M2 | reconstructed from dataset intervals | alerts.in.ua active snapshot ← **different producer from training** |
-| oblasts that started an alert in the last 5 / 60 min | M2 | dataset intervals | poller history in PostgreSQL |
-| minutes since Kyiv oblast (Kyivska) alert started | M2 | dataset intervals | poller state |
-| minutes since previous Kyiv alert ended | M2 | clean alert table | PostgreSQL alert table |
-| count of Air Force posts by threat type (drones / jet drones / missiles / ballistic / guided bombs) in last 6 h and 12 h, and mentions of Kyiv | M1 | scraped posts, `datetime_utc < t` | live Telegram ingest |
-| drones and missiles in last night's morning summary | M1 | parsed summaries | parsed live summary |
-| threat type in the 30 min before alert start | M2 | scraped posts | live Telegram ingest |
-
-Two features have a serving source different from their training source: "oblasts under alert now" (Vadimkin dataset vs alerts.in.ua live) and every Telegram feature (edited history vs first-published text). Both are monitored for training–serving skew (6.6). All features are computed by one Python module used by both the offline and the online path.
+| hour, lead, issue time, weekday, holiday, moon illumination | M1 | computed | computed |
+| same-hour start rate, 30 d; minutes of alert in previous window; days since last ≥ 180-min night | M1 | clean alert Parquet | PostgreSQL alert table |
+| Kyiv under alert now | M1 | rebuilt at *t* | poller state |
+| **oblasts under alert now** (raions → oblasts) | M1, M2 | dataset intervals | **alerts.in.ua snapshot** ← skew risk |
+| oblasts started alert in last 5 / 60 min; minutes since Kyiv oblast alert; minutes since previous Kyiv alert | M2 | dataset intervals | poller history |
+| Air Force posts per threat type in last 6 / 12 h; Kyiv mentions; last night's drone and missile counts | M1, M3 | scraped posts, `datetime_utc < t` | live ingest ← skew risk (edits) |
+| threat type in 30 min before alert start | M2 | scraped posts | live ingest |
 
 ### 5.4 Experimentation and validation
 
-- **Split by time, never at random.** Alerts come in waves: consecutive hours and nights are strongly correlated, so a random split puts the same attack into train and test and inflates scores (leakage).
-- **Folds:** expanding window with monthly test folds (train on everything before month *m*, test on month *m*). **Final hold-out:** 2026-03-01 → 2026-08-31, touched once per model family.
-- **As-of discipline:** every feature is computed only from data with timestamp < issue time (M1) or < alert start (M2); Telegram posts filtered by `datetime_utc`.
-- **Offline metrics:** M1 Brier (main), AUC, F1 with ±1 h tolerance at the validation-tuned threshold, calibration curve, Brier per lead hour. M2 pinball loss at 0.5 and 0.9 (main), P50 within ±15 min, MAE, P90 kept, P90 width, all also split by threat type and night/day. M3 log-loss (main), macro-F1.
-- **Comparing a new model with the current one (champion/challenger):** both scored on the same last 3 monthly folds; the challenger must be better on the main metric with a day-level bootstrap 95% interval that excludes zero, must not break any guardrail, and must beat the rule baseline. Then it runs one week in shadow mode (predictions logged, not served) before manual promotion.
+- **Time split only.** Attacks come in waves; a random split leaks the same attack into train and test.
+- **Folds:** expanding window, monthly test folds. Final hold-out 2026-03-01 … 2026-08-31, used once per model family.
+- **As-of:** features use only data with timestamp < issue time (M1) or < alert start (M2).
+- **Metrics:** M1 Brier, AUC, F1 ±1 h, calibration, Brier per lead. M2 pinball 0.5 / 0.9, ±15 min, P90 kept, P90 width, per threat type and night/day. M3 log-loss, macro-F1.
+- **Promotion:** challenger vs champion on the last 3 monthly folds. It must win on the main metric with a day-level bootstrap 95% CI excluding 0, pass all guardrails, and beat the rule baseline. Then 1 week in shadow mode, then manual promotion.
 
 ### 5.5 Human in the loop
 
-- **Drift alert:** goes to the on-call engineer (the author). Within 24 h they open the Evidently report and choose: ignore (documented), retrain, or switch to baseline.
-- **Model promotion:** never automatic. The on-call engineer reviews the comparison report (5.4) and moves the MLflow alias `champion` to the new version.
-- **Override:** setting `FORCE_BASELINE=true` (environment variable / Kubernetes ConfigMap) makes the API serve baseline predictions with `degraded: true`; pinning the `champion` alias to an older version rolls back the model.
+- Drift alarm → on-call (author) reviews the Evidently report within 24 h: ignore / retrain / fall back to baseline.
+- Promotion: manual move of the MLflow alias `champion`.
+- Override: `FORCE_BASELINE=true` (ConfigMap) or pin `champion` to an older version.
 
 ## 6 Implementation
 
@@ -303,7 +231,7 @@ flowchart LR
     aiu -- "raw data: active alerts every 20 s" --> sys
     aiu -- "labels: finished alerts (monthly)" --> sys
     tg -- "raw data: posts every 2 min" --> sys
-    sys -- "predictions: 12-h hourly forecast, duration P50/P90" --> cli
+    sys -- "predictions: 12-h start risk + type, duration P50/P90" --> cli
     sys -- "alerts: drift, staleness, failures" --> onc
     onc -. "promotion approval, override" .-> sys
 
@@ -312,7 +240,7 @@ flowchart LR
 
 #### Data flow on the seven layers
 
-The three marks: **version point** (DVC snapshot of `raw/` after ingestion), **quality gate** (before the feature store), and the split between the **training path** (offline store) and the **serving path** (online store).
+Marks: **version point** (DVC snapshot of `raw/`), **quality gate** (before the feature store), **training path** (offline store) vs **serving path** (online store).
 
 ```mermaid
 flowchart TB
@@ -369,215 +297,206 @@ flowchart TB
     m1 -- "trigger retraining" --> t1
 ```
 
-Layer notes:
-
-- **Real-time path:** the poller writes raw events and calls the same preprocessing and feature code before updating the online store, so one module defines every feature (no separate streaming stack; see 7.1).
-- **Quality gate checks:** no duplicate alerts after dedup, every end after its start, newest event < 2 days old, row count within ±50% of the trailing 3-month median, both oblast- and raion-level rows mapped to an oblast, Telegram not silent for > 6 h. A failed check stops the run and alerts the on-call engineer.
-- **Feature store layer** is kept, but implemented without Feast (see 7.1): offline side = Parquet in MinIO, online side = PostgreSQL.
+- The poller runs the same preprocessing and feature code before writing the online store, so there is no separate streaming stack.
+- Quality gate: no duplicates after dedup; end > start; newest event < 2 days old; rows within ±50% of the 3-month median; every raion mapped to an oblast; Telegram silent ≤ 6 h. A failure stops the run and alerts on-call.
+- Feature store = Parquet (offline) + PostgreSQL (online), no Feast (7.1).
 
 #### Deployment, first draft
 
-Local components, each with its managed cloud equivalent (AWS / GCP / Azure). Lab 4 replaces this with the real cluster topology.
+Everything runs on one laptop in Minikube (Kubernetes 1.30.0, 4 GB); Lab 4 replaces this with the real cluster topology. Each box shows the local tool and, in italics, the AWS service that would replace it. Arrows read "A → B: A writes to / sends to / loads from B"; numbers give the order of a typical run. The system has two sides that share MinIO, PostgreSQL and MLflow, drawn separately for readability.
+
+**Scheduled (batch) side** — Airflow jobs ingest data, train models and publish the 10:00 / 22:00 forecast.
 
 ```mermaid
-flowchart TB
-    subgraph laptop["Laptop / Minikube 1.33.1 (Kubernetes 1.30.0, docker driver, 4 GB) — first draft, replaced in Lab 4"]
-        minio["MinIO-compatible object store<br/>pgsty/silo<br/><i>S3 / Cloud Storage / Blob Storage</i>"]
-        dvc["DVC 3.67.1 remote on MinIO<br/><i>S3 / GCS / Azure Blob remote</i>"]
-        af["Apache Airflow 3.3.1<br/><i>MWAA / Cloud Composer / Data Factory</i>"]
-        pg["PostgreSQL 16<br/><i>RDS / Cloud SQL / Azure DB for PostgreSQL</i>"]
-        mlf["MLflow 3.16.1<br/><i>SageMaker MLflow / Vertex AI Experiments + Model Registry / Azure ML with MLflow</i>"]
-        reg["Minikube registry<br/><i>ECR / Artifact Registry / ACR</i>"]
-        api["kyiv-alerts-api<br/>FastAPI + models<br/><i>EKS / GKE / AKS</i>"]
-        poll["alerts-poller<br/><i>EKS / GKE / AKS</i>"]
-        mon["Evidently + Prometheus + Grafana<br/><i>SageMaker Model Monitor + CloudWatch /<br/>Vertex AI Model Monitoring + Cloud Monitoring /<br/>Azure ML monitoring + Azure Monitor</i>"]
+flowchart LR
+    subgraph src["External sources"]
+        gh["GitHub alert dataset<br/>history 2022–2026"]
+        aiu["alerts.in.ua API<br/>last month of alerts"]
+        tg["Telegram @kpszsu<br/>Air Force posts"]
     end
-    af --> minio
-    af --> pg
-    af --> mlf
-    dvc --> minio
-    mlf --> pg
-    mlf --> minio
-    reg --> api
-    reg --> poll
-    poll --> api
-    api --> pg
-    mon --> pg
-    mon --> api
+    subgraph laptop["Laptop · Minikube — scheduled (batch) side"]
+        af["<b>Apache Airflow 3.3.1</b><br/>DAGs: ingest_alerts, ingest_telegram,<br/>train_monthly, forecast_12h<br/><i>AWS: MWAA</i>"]
+        minio[("<b>MinIO</b> pgsty/silo<br/>raw/ · features/ · models/<br/><i>AWS: S3</i>")]
+        dvc["<b>DVC 3.67.1</b><br/>data versions<br/><i>AWS: S3 remote</i>"]
+        mlf["<b>MLflow 3.16.1</b><br/>runs + model registry<br/><i>AWS: SageMaker with MLflow</i>"]
+        pg[("<b>PostgreSQL 16</b><br/>forecasts · MLflow metadata<br/><i>AWS: RDS</i>")]
+    end
+    gh -- "history CSV, once" --> af
+    aiu -- "finished alerts, monthly" --> af
+    tg -- "new posts, every 2 min" --> af
+    af -- "1 writes raw files and features" --> minio
+    dvc -- "2 snapshots raw/ and features/<br/>as a data version" --> minio
+    af -- "3 trains models, logs params,<br/>metrics, data version" --> mlf
+    mlf -- "4 stores model files" --> minio
+    mlf -- "4 stores run metadata" --> pg
+    af -- "5 writes the 10:00 / 22:00<br/>forecast (M1 + M3)" --> pg
+    style src fill:#f5f5f5,stroke:#999
+```
+
+**Always-on (online) side** — the poller and the API react to live alerts and serve requests; monitoring watches both.
+
+```mermaid
+flowchart LR
+    aiu["alerts.in.ua API<br/>active alerts"]
+    subgraph laptop["Laptop · Minikube — always-on (online) side"]
+        reg["<b>Image registry</b><br/><i>AWS: ECR</i>"]
+        poll["<b>alerts-poller</b> container<br/><i>AWS: EKS</i>"]
+        api["<b>kyiv-alerts-api</b> container<br/>FastAPI + models<br/><i>AWS: EKS</i>"]
+        mlf["<b>MLflow</b> model registry<br/><i>AWS: SageMaker with MLflow</i>"]
+        pg[("<b>PostgreSQL 16</b><br/>live alerts · forecasts ·<br/>predictions + labels<br/><i>AWS: RDS</i>")]
+        mon["<b>Evidently + Prometheus + Grafana</b><br/><i>AWS: Model Monitor + CloudWatch</i>"]
+    end
+    cli["API client<br/>app / Lab 5 agent"]
+    onc["On-call engineer<br/>Telegram bot / email"]
+
+    aiu -- "1 polled every 20 s" --> poll
+    poll -- "2 stores live alert state" --> pg
+    poll -- "3 Kyiv alert started:<br/>POST predict/duration" --> api
+    mlf -- "loads champion model" --> api
+    reg -- "container images" --> poll
+    reg -- "container images" --> api
+    api -- "4 reads forecasts + features,<br/>writes M2 predictions" --> pg
+    cli -- "5 GET /v1/forecast/latest,<br/>/v1/alert/current" --> api
+    mon -- "6 reads predictions + labels,<br/>scrapes API latency / errors" --> pg
+    mon -- "7 alarms" --> onc
 ```
 
 ### 6.2 Infra
 
-Local stack (pinned as in the course reference table) and the managed cloud service per component. Naming the cloud services is required; running on them is not.
+Local stack (versions pinned as in the course reference table) and the AWS service that would replace each component. AWS is used because the cost estimate (6.7) is for AWS.
 
-| Component | Local (pinned) | AWS | GCP | Azure |
-|---|---|---|---|---|
-| Object storage, data lake | MinIO-compatible `pgsty/silo:RELEASE.2026-09-16T00-00-00Z` | Amazon S3 | Cloud Storage | Blob Storage |
-| Data versioning remote | DVC 3.67.1 + dvc-s3 3.3.0, remote on MinIO | S3 remote | GCS remote | Azure Blob remote |
-| Warehouse, serving database | PostgreSQL 16 | Amazon RDS | Cloud SQL | Azure Database for PostgreSQL |
-| Orchestrator | Apache Airflow 3.3.1, LocalExecutor | Amazon MWAA | Cloud Composer | Azure Data Factory |
-| Experiment tracking, model registry | MLflow 3.16.1, PostgreSQL backend, MinIO artifacts | SageMaker with MLflow | Vertex AI Experiments + Model Registry | Azure ML with MLflow |
-| Feature store | Parquet (offline) + PostgreSQL (online), shared feature code; Feast 0.66.0 not used (7.1) | SageMaker Feature Store | Vertex AI Feature Store | Azure ML managed feature store |
-| Container registry | Minikube built-in registry | Amazon ECR | Artifact Registry | Azure Container Registry |
-| Kubernetes cluster (API, poller) | Minikube 1.33.1 (Kubernetes 1.30.0) | Amazon EKS | GKE | AKS |
-| Model and data monitoring | Evidently | SageMaker Model Monitor | Vertex AI Model Monitoring | Azure ML model monitoring |
-| Metrics store, dashboards | Prometheus, Grafana | Amazon CloudWatch | Cloud Monitoring | Azure Monitor |
+| Component | Local (pinned) | AWS managed equivalent |
+|---|---|---|
+| Object storage | MinIO-compatible `pgsty/silo:RELEASE.2026-09-16T00-00-00Z` | Amazon S3 |
+| Data versioning | DVC 3.67.1 + dvc-s3 3.3.0, remote on MinIO | DVC with S3 remote |
+| Serving DB | PostgreSQL 16 | Amazon RDS for PostgreSQL |
+| Orchestrator | Airflow 3.3.1, LocalExecutor | Amazon MWAA |
+| Tracking, registry | MLflow 3.16.1 (PostgreSQL + MinIO) | SageMaker with MLflow |
+| Feature store | Parquet + PostgreSQL (no Feast) | SageMaker Feature Store |
+| Container registry | Minikube registry | Amazon ECR |
+| Cluster (API, poller) | Minikube 1.33.1, Kubernetes 1.30.0 | Amazon EKS |
+| Model monitoring | Evidently | SageMaker Model Monitor |
+| Metrics, dashboards | Prometheus, Grafana | Amazon CloudWatch |
 
-Every component in this table appears in the diagrams of 6.1, and every component in the diagrams appears here. The Lab 3 components (vector store: pgvector 0.8.7; LLM inference: **Assumption** a hosted API, since there is no local GPU) are added to both the table and the diagrams in Lab 3.
+**Managed vs self-run, example (Airflow → MWAA):** gain no scheduler or database upkeep, upgrades and scaling handled by AWS; lose control over versions and plugins, and pay the largest line of the bill (6.7) for ~5 small DAGs. Hence the cost estimate assumes Airflow self-hosted on EKS.
+
+The table and the diagrams name the same components. Lab 3 adds pgvector 0.8.7 and an LLM endpoint (hosted API **A**, no local GPU) to both.
 
 ### 6.3 Performance
 
-- **Batch vs online.** M1 is **batch**: the answer only changes twice a day, so forecasts are precomputed at 10:00 and 22:00 and the API reads a row (cheap, cacheable, survives a model-service outage). M2 is **online, event-triggered**: it depends on the alert map at the exact start time, so it cannot be precomputed; the poller detects the start and calls the model once.
-- **Budgets:** M1 DAG run ≤ 5 min end to end (feature query ≤ 1 min, scoring 12 rows ≤ 1 s, write ≤ 1 s). M2 ≤ 60 s p95 from alert start = ≤ 20 s poll interval + ≤ 5 s feature update + ≤ 1 s inference + margin for the alerts.in.ua feed delay (**Assumption:** feed lag ≤ 30 s; measured in Lab 4). API p95 ≤ 200 ms.
-- **Throughput:** **Assumption** ≤ 10 requests/s; one FastAPI replica handles this. Training: ~30k hourly rows per year and ~500 alerts per year → minutes on a laptop CPU.
+- **M1 batch:** the answer changes twice a day → precompute, and the API reads a row. DAG ≤ 5 min (features ≤ 1 min, scoring < 1 s).
+- **M2 online, event-triggered:** needs the alert map at the start moment. Budget ≤ 60 s p95 = 20 s poll + ≤ 5 s features + ≤ 1 s inference + feed lag (≤ 30 s **A**, measured in Lab 4).
+- **Size:** ~8.8k hourly rows and ~500 alerts per year → training takes minutes on CPU. One API replica handles ≤ 10 req/s.
 
 ### 6.4 Security
 
-- **Secrets:** the alerts.in.ua token is the only secret. Locally: `.env` (git-ignored, `.env.example` committed without values). Minikube: Kubernetes Secret. Cloud: AWS Secrets Manager / Secret Manager / Key Vault. Telegram scraping uses the public preview and needs no credentials; if we switch to Telethon, its session file becomes a secret too.
-- **Who may call the service:** read-only `GET` endpoints are open on localhost / inside the cluster. In the cloud variant they require an API key and rate limiting (**Assumption:** 60 requests/min per key). `POST /v1/predict/duration` is reachable only from the poller (Kubernetes NetworkPolicy).
-- **Upstream terms:** alerts.in.ua requires public services to proxy its data and never expose the token to clients; our API is that proxy. Request rate stays under 8/min.
+- Only secret: alerts.in.ua token. Kept in `.env` (git-ignored) → Kubernetes Secret → cloud secret manager.
+- `POST /v1/predict/duration` is reachable only from the poller (NetworkPolicy). Cloud read endpoints use an API key + rate limit.
+- alerts.in.ua terms: proxy the data and never expose the token; our API is that proxy.
 
 ### 6.5 Data privacy
 
-- The data contains **no personal data**: alerts are public, region-level events; Telegram data is posts of an official public channel (no comments, no user accounts). View counts are aggregate.
-- **Retention:** raw and processed data and models are kept for the duration of the course plus one year (**Assumption:** until 2027-12). API access logs: 30 days, no request bodies.
-- **Sensitive use:** the system publishes only probabilities and durations for Kyiv; it stores and outputs nothing about air-defence positions or strike locations.
+- No personal data: alerts are public region-level events; posts come from an official channel (no comments, no users).
+- Retention: data and models until 2027-12 **A**; API logs 30 days. Nothing about strike locations or air defence is stored or served.
 
 ### 6.6 Monitoring and alarms
 
-First draft; Lab 4 makes it real. Labels arrive late (M1 up to 12 h, M2 at alert end, up to ~11 h), so monitoring has four layers, from fastest to slowest. The first three need no labels and are early warnings; only performance proves the model got worse.
+Labels arrive late, so there are four layers; only the last one needs labels.
 
-**Measures used**
+- **Drift measures:** PSI = Σ (cur% − ref%) · ln(cur% / ref%) for numeric features. Jensen–Shannon distance for distributions (0 = identical, 1 = disjoint).
+- **Reference = champion's training data**, fixed until retrain. With a rolling 90-day reference the raion-switch alarm faded after ~5 weeks.
+- **Thresholds = 95th percentile of normal variation** (2025–26), alarm after 2 consecutive daily checks. The textbook PSI 0.2 would fire every few weeks here.
 
-- **PSI (Population Stability Index)**, numeric features: bin the values, then Σ (current% − reference%) · ln(current% / reference%). 0 = identical distributions.
-- **Jensen–Shannon distance**, categorical distributions and profiles (e.g. share of alerts per hour of day): 0 = identical, 1 = disjoint.
-- **Reference = the champion's training data**, fixed until the next retrain. A rolling reference "learns" the new normal: with a rolling 90-day reference the raion-switch alarm faded after ~5 weeks while the model had not been retrained.
-- **Thresholds are calibrated on the data, not textbook values.** Over 2025–26, normal week-to-week PSI of "oblasts under alert" had median 0.11 and 95th percentile 0.47, so the common 0.2 rule would fire every few weeks. Each drift threshold is the 95th percentile of normal variation, and an alarm needs 2 consecutive daily checks above it.
-
-**1. Data health** (no labels; every minute / every run)
-
-| Signal | Threshold | Severity |
-|---|---|---|
-| alerts.in.ua poll failing | > 2 min | 🔴 page |
-| Newest finished alert in the clean table (catches a job that re-reads the same partition) | > 2 days old | 🔴 page |
-| Telegram: no new posts | > 6 h | 🟡 warn |
-| Telegram: share of posts the parser cannot classify | > 20% over 24 h | 🔴 page |
-| Rows per batch vs trailing 3-month median | outside ±50% | quality gate fails the run |
-| DAG runs; M1 published on time | any failed run; not published by issue time + 5 min | 🔴 page |
-| API p95 latency, 5xx rate (15 min) | > 200 ms, > 1% | 🔴 page |
-
-**2. Input drift** (no labels; Evidently, daily)
-
-| Signal | Why | Window vs reference | Threshold (95th pct of normal) | Measured in our data |
+| Layer | Signal | Window | Threshold | Severity |
 |---|---|---|---|---|
-| Raw active alert records per hour (upstream signal, not a feature) | catches upstream format changes | 7 d | PSI > 0.5 | 0.11 before the raion switch → 0.70 → **1.00** in Nov 2025 |
-| Oblasts under alert, hourly snapshots (main feature of M1, M2) | if its meaning changes, the model misreads every situation | 7 d | PSI > 0.5 | normal: median 0.11, p95 0.47; unchanged by the raion switch thanks to aggregation (6.2 → 6.4 oblasts) |
-| Kyiv alert profile by hour of day | attacks moving in time; backbone of M1 | **30 d** vs prior 180 d (7 d has only ~10 alerts: one week gave JS 0.34 by chance) | JS > 0.13 | normal: median 0.075, p95 0.131 |
-| Telegram threat-type mix (drones / cruise / ballistic posts) | tactics change shows here before alerts change | 7 d | JS, calibrated in Lab 2 once the history is loaded | — |
-| Training–serving skew: oblasts under alert from live snapshots vs rebuilt from history for the same hours | different producers at training and serving | 7 d | mean difference > 1 oblast | — |
+| Data health | alerts.in.ua poll failing | — | > 2 min | 🔴 |
+| | newest finished alert (catches re-reading one partition) | — | > 2 days | 🔴 |
+| | Telegram silent / unparsed posts | — / 24 h | > 6 h / > 20% | 🟡 / 🔴 |
+| | rows per batch vs 3-month median | batch | ±50% | gate fails |
+| | DAG failure; M1 not published | — | any; issue + 5 min | 🔴 |
+| | API p95 latency / 5xx | 15 min | > 200 ms / > 1% | 🔴 |
+| Input drift | raw active records per hour (upstream signal) | 7 d | PSI > 0.5 (Nov 2025: 0.11 → 0.70 → 1.00) | 🟡 |
+| | oblasts under alert | 7 d | PSI > 0.5 (normal median 0.11, p95 0.47) | 🟡 |
+| | Kyiv start profile by hour of day | 30 d vs 180 d (7 d too noisy: one week = 0.34) | JS > 0.13 (normal median 0.075, p95 0.131) | 🟡 |
+| | Telegram threat-type mix | 7 d | JS, calibrated in Lab 2 | 🟡 |
+| | skew: live vs rebuilt oblasts under alert | 7 d | mean diff > 1 | 🟡 |
+| Prediction drift | mean P(start) per issue time; share of 🔴 hours; mean P90; type mix | 7 d vs 30 d | > 50% change (type: JS > 0.1) | 🟡 |
+| Performance | M1: 30-day Brier minus baseline Brier, same hours | rolling | > 0 for 14 days in a row | 🟠 |
+| | M2: P90 kept, last 30 alerts | rolling | < 80%² | 🟠 |
+| | M3: log-loss vs last-month mix, last 30 typed alerts | rolling | worse than baseline | 🟠 |
 
-All rows: 🟡 warn in the daily digest, with the Evidently report attached.
+² If true coverage is 90%, observing < 80% in 30 alerts has probability 2.6% (false alarm); at true 75% it is caught with probability 65%.
 
-**3. Prediction drift** (no labels; daily, last 7 d vs last 30 d)
+**Routing:** Prometheus + Evidently → Grafana alert rules → Telegram bot + email. 🔴 immediately, 🟡 daily digest, 🟠 immediately with the comparison report.
 
-| Signal | Example of what it catches | Threshold |
+| Input drift | Performance | Action |
 |---|---|---|
-| Mean P(start) per issue time (10:00 / 22:00) | Telegram ingest dies → Telegram features become 0 → forecasts quietly fall toward the baseline | change > 50% → 🟡 warn |
-| Share of 🔴 hours per day | model calls everything high-risk, or nothing | change > 50% → 🟡 warn |
-| Mean predicted P90 (M2) | duration estimates suddenly doubled or halved | change > 50% → 🟡 warn |
-| Mean predicted type mix (M3) | type probabilities collapse to one class | JS > 0.1 → 🟡 warn |
-
-Prediction drift does not mean the model is wrong (the world may have become more dangerous); it means "look now instead of in 12 hours".
-
-**4. Performance** (needs labels)
-
-| Model | Metric | When computed | Threshold | Why this threshold |
-|---|---|---|---|---|
-| M1 | 30-day rolling Brier of the model minus Brier of the hour-of-day baseline on the same hours | at each window end | model worse than baseline **14 days in a row** → 🟠 retrain alert | when attacks increase every forecast's Brier rises, so "still better than the rule?" is the fair test; one bad night is noise |
-| M1 | calibration: observed alert rate per predicted-probability bin | daily | dashboard only | — |
-| M2 | P90 kept: share of the last **30** Kyiv alerts that ended before P90 (~3 weeks at 1.4 alerts/day) | at each alert end | < 80% → 🟠 retrain alert | if the model is fine (true 90%), < 80% in 30 alerts happens 2.6% of the time; if coverage really fell to 75%, it is caught 65% of the time |
-| M3 | multiclass log-loss vs last-month type-mix baseline, last 30 alerts with a known type | when the type is known from Telegram | worse than baseline over 30 alerts → 🟠 retrain alert | same logic as M1 |
-
-**Routing.** Prometheus metrics and Evidently results feed Grafana alert rules → Telegram bot of the on-call engineer (author) + email. 🔴 is sent immediately; 🟡 is batched into one daily digest; 🟠 is sent immediately with the comparison report. Example:
-
-> 🟡 Input drift: raw active alert records — PSI 0.70 (7 d vs training, 2nd day above 0.5). Mean 18.7 → 28.9 records/h. Oblasts under alert unchanged (6.2 → 6.4). M1 Brier 0.093 vs baseline 0.098. Report: `<link>`. Action: check the upstream alert levels.
-
-**Reading the layers together (runbook)**
-
-| Input drift | Performance | Meaning | Action |
-|---|---|---|---|
-| no | OK | all fine | — |
-| yes | OK | the world changed, the model copes (e.g. the raion switch, absorbed by aggregation) | note it, keep watching |
-| yes | worse | real drift | retrain on recent data, compare by rule 5.4, promote; if the challenger loses, `FORCE_BASELINE=true` |
-| no | worse | concept drift: same inputs, new relationship (new tactics) | retrain and look for a new feature, usually from Telegram |
-| data-health 🔴 | any | broken pipeline or source | API serves the baseline with `degraded: true`; fix the source or switch to the backup (volunteer dataset) |
+| yes | OK | log, watch (e.g. raion switch, absorbed by aggregation) |
+| yes | worse | retrain, compare (5.4), promote or `FORCE_BASELINE` |
+| no | worse | concept drift: retrain, look for a new (Telegram) feature |
+| data health 🔴 | any | serve baseline with `degraded: true`, fix or switch source |
 
 ### 6.7 Cost
 
-Estimated monthly cost of the cloud column on AWS (eu-central-1), even though the project runs locally. **Assumption:** rough list-price estimates, to be confirmed with the [AWS Pricing Calculator](https://calculator.aws/) before the defense.
+AWS eu-central-1, monthly. **A:** rough list prices, to verify in the [AWS Pricing Calculator](https://calculator.aws/).
 
-| Component | Sizing assumption | Estimate, USD/month |
+| Item | Sizing | USD |
 |---|---|---|
-| Amazon S3 | ≤ 10 GB (raw, Parquet, DVC cache, MLflow artifacts), low request volume | < 1 |
-| Amazon RDS for PostgreSQL | db.t4g.micro, single-AZ, 20 GB gp3 | ~15–20 |
-| Amazon EKS | control plane + 2 small nodes (t3.medium) for API, poller, Airflow and MLflow self-hosted | ~73 + ~60 |
-| Amazon ECR | < 1 GB of images | < 1 |
-| Amazon CloudWatch | basic metrics, logs ≤ 5 GB, a few alarms | ~5–10 |
-| **Self-hosted on EKS total** | | **~150–170** |
-| Amazon MWAA (instead of Airflow on EKS) | smallest environment class | + ~200–400 |
-| SageMaker with MLflow (instead of MLflow on EKS) | smallest tracking server | + ~100–150 |
-| SageMaker Model Monitor (instead of Evidently) | daily small jobs | + ~10–20 |
-| **Fully managed total** | | **~450–750** |
+| S3 + ECR | ≤ 10 GB + ≤ 1 GB | < 2 |
+| RDS PostgreSQL | db.t4g.micro, 20 GB | 15–20 |
+| EKS | control plane + 2 × t3.medium (API, poller, Airflow, MLflow self-hosted) | ~135 |
+| CloudWatch | basic metrics, ≤ 5 GB logs | 5–10 |
+| **Self-hosted total** | | **~150–170** |
+| + MWAA, SageMaker MLflow, Model Monitor instead | smallest classes | + 300–570 |
 
-The orchestrator and the tracking server dominate the bill, not compute for the model. The design therefore assumes the self-hosted variant (under the $200 ceiling in 4.2).
+The orchestrator and tracking server dominate the bill, not the model → self-hosted variant.
 
 ### 6.8 Integration points
 
-| Party | Direction | Contract |
-|---|---|---|
-| Vadimkin dataset (volunteer maintainer, MIT) | upstream | Best effort, no SLA; CSV columns `oblast, raion, hromada, level, started_at, finished_at, source`, UTC. We de-duplicate, check freshness, and use it only for bootstrap. |
-| alerts.in.ua | upstream | Personal token; ≤ 8–10 requests/min (hard 12/min), history 2/min; public services must proxy; no use for critical infrastructure; availability not guaranteed. On schema change the quality gate fails. |
-| Ukrainian Air Force Telegram channel | upstream | Public channel, no API contract; post format (emoji + type + location) can change at any time → keyword/emoji parser is versioned and the share of unparsed posts is monitored. |
-| API clients (planning app, Lab 5 agent) | downstream | Versioned JSON API `/v1`. Every response carries `model_version`, `issued_at` / `alert_started_at`, `degraded`, and a disclaimer field. Breaking changes only in `/v2`. Probabilities are calibrated per hour; durations are minutes. |
+| Party | Contract |
+|---|---|
+| Vadimkin dataset (upstream) | best effort, no SLA; CSV `oblast, raion, hromada, level, started_at, finished_at, source`, UTC; dedup + freshness check |
+| alerts.in.ua (upstream) | token; ≤ 8 req/min (hard limit 12), history 2/min; must proxy; schema change → quality gate fails |
+| Air Force Telegram (upstream) | no contract; format can change → versioned parser, unparsed share monitored |
+| API clients (downstream) | versioned JSON `/v1`; `model_version`, timestamps, `degraded`; breaking changes only in `/v2` |
 
 ### 6.9 Risks and uncertainties
 
 | Risk | Mitigation |
 |---|---|
-| Upstream goes stale or disappears (official dataset already stopped on 2026-09-07) | Freshness alarm; volunteer dataset and alerts.in.ua history as secondary sources |
-| Upstream schema or semantics change (Nov 2025 raion switch) | Quality gate on levels and columns; raion-to-oblast aggregation; drift monitoring on the raw active-record count (PSI reached 1.00 at the switch) |
-| Telegram blocks scraping or changes page markup | Parser smoke test in the quality gate; Telethon with a personal account as fallback |
-| Leakage from Telegram (edited posts, posts written after the event) | Strict `datetime_utc < t` filter; compare history-trained vs live-collected features in Lab 4 |
-| Concept drift: attack tactics change faster than monthly retraining | Daily drift and performance monitoring; on-demand retraining; baseline fallback |
-| Too little data for M2 (≈ 500 alerts per year) | Simple, regularised quantile models; pool years with a drift-aware weight; report intervals, not only point scores |
-| Over-reliance or misuse of forecasts as safety advice | Planning-only framing, disclaimer in every response, no shelter advice, nothing about air-defence or strike locations |
-| alerts.in.ua token blocked for exceeding limits | Client-side rate limiter at 8 requests/min; `If-Modified-Since` caching |
+| upstream stale (official file stopped 2026-09-07) | freshness alarm; volunteer data + alerts.in.ua history |
+| upstream semantics change (raion switch) | aggregation in preprocessing; raw-record PSI |
+| Telegram blocks scraping / changes markup | parser smoke test in gate; Telethon fallback |
+| leakage from edited or late posts | `datetime_utc < t`; compare history vs live features in Lab 4 |
+| tactics change faster than monthly retrain | daily drift + performance monitoring; on-demand retrain; baseline fallback |
+| small M2 data (~500 alerts/year) | simple regularised quantile models; report intervals |
+| M1 start timing barely predictable (F1 0.27 vs 0.25) | honest targets; Telegram features tested in Lab 2; baseline stays the fallback |
+| token blocked for rate limits | client-side limiter 8/min, `If-Modified-Since` |
 
 ## 7 Appendix
 
 ### 7.1 Alternatives
 
-| Alternative | Pros | Cons | Decision and reason |
-|---|---|---|---|
-| **Weather features** (Open-Meteo Previous Runs API, forecast made 24 h earlier, from 2024-01-19) | Free, no key; the 24-h-earlier forecast matches serving exactly | Tested at Kyiv (night window) and at the Tsymbulova launch area (Oryol oblast, 15:00–22:00): univariate AUC 0.46–0.55 in every year; hold-out Brier worse than climatology (0.200–0.208 vs 0.198); no gain when added to history | **Rejected with evidence**: launches are scheduled by the attacker, ordinary weather variation does not predict them |
-| **Hourly label "≥ 10 min of alert in the hour"** or **"any minute in the hour"** | Captures how disrupted an hour is | 62% of alerts cross an hour boundary: with ≥ 10 min, 4% of alerts (short ones split across two hours) vanish; with any minute, a 2-minute tail marks a whole hour and long alerts count several times | **Rejected**: "alert starts in the hour" counts each alert once (5.1); disruption is covered by M2 |
-| **One binary label per night** | Simplest model and metric | Arbitrary 60-min threshold, no timing, needs a separate day model | **Rejected**: hourly framing (5.1) |
-| **Feast** as the feature store | Standard offline/online store, point-in-time joins | ~15 features from two tables; adds a registry, a materialisation job and another service to run on 4 GB | **Rejected for now**: shared feature code over Parquet + PostgreSQL gives the same offline/online split; revisit if features multiply |
-| **Kafka + Spark streaming** for live alerts | True streaming, scalable | ~1.4 Kyiv alerts/day, a 20-s poll is enough; two heavy services for no gain | **Rejected**: polling service |
-| **Telethon (Telegram API) instead of the web preview** | Exact edit history, faster back-fill | Needs a personal account, phone login and a secret session file | **Web preview chosen**; Telethon kept as fallback |
-| **Historical Weather API (reanalysis)** for weather | Longest history (since 1940) | Observed-after-the-fact weather → training–serving skew | Not used (and weather rejected overall) |
+| Alternative | Evidence / reason | Decision |
+|---|---|---|
+| Weather features (Open-Meteo Previous Runs, 24 h-ahead forecast) | Kyiv and Tsymbulova launch area: AUC 0.46–0.55 in every year; hold-out Brier worse than climatology | rejected |
+| Hour label "≥ 10 min" / "any minute" | loses 4% of alerts / over-counts long alerts (5.1) | rejected → "starts in hour" |
+| One binary label per night | arbitrary threshold, no timing | rejected → hourly M1 |
+| Feast | ~15 features from two tables; another service on 4 GB | rejected for now |
+| Kafka + Spark | ~1.4 Kyiv alerts/day; 20 s polling is enough | rejected |
+| Telethon instead of web preview | needs a personal account and a session secret | fallback only |
 
 ### 7.2 Data pipelines, versioning and baseline
 
-*Placeholder — filled in Lab 2.*
+*Placeholder — Lab 2.*
 
 ### 7.3 Serving, monitoring and drift
 
-*Placeholder — filled in Lab 4.*
+*Placeholder — Lab 4.*
 
 ### 7.4 Milestones
 
-- **Lab 2:** ingestion DAGs for alerts and Telegram into MinIO with DVC versioning, the quality gate, and the baselines and first models for M1 and M2 tracked in MLflow on time-based folds.
-- **Lab 3:** an LLM component that answers "what is the current threat to Kyiv and why does the forecast say so" by retrieving Air Force posts and morning summaries from pgvector, evaluated on a fixed question set with retrieval and answer metrics.
-- **Lab 4:** the API and the poller containerised and deployed on Minikube with health probes, Evidently/Prometheus/Grafana monitoring, and replayed real drifts that reach the on-call engineer: the November 2025 raion switch (raw-record PSI), the 2025 rise in long night alerts (label shift), and a Telegram format change (unparsed-post share).
-- **Lab 5:** an agent with tools for active alerts, the 12-hour forecast, the duration prediction and post search that answers planning questions, with persisted traces and a ten-task evaluation.
+- **Lab 2:** ingestion DAGs (alerts, Telegram), DVC, quality gate, baselines and first M1/M2/M3 models in MLflow on time folds; M3 label match-rate check.
+- **Lab 3:** LLM answers "what is the current threat to Kyiv and why this forecast", retrieving Air Force posts from pgvector; evaluated on a fixed question set.
+- **Lab 4:** API + poller on Minikube with probes; Evidently / Prometheus / Grafana; replayed drifts (raion switch, 2025 long nights, Telegram format change) reach on-call.
+- **Lab 5:** agent with tools (active alerts, forecast, duration, post search); traced, ten-task evaluation.
