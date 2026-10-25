@@ -1,13 +1,13 @@
 # Training configuration; every value is logged as an MLflow param.
 seed: 42
 split:
-  # Time split (design 5.4). 2026-08 is excluded by the quality gate (upstream gap),
-  # so the hold-out is the five complete months 2026-03 .. 2026-07.
+  # Time split (design 5.4). The official file has no alerts after 2026-08-29 05:00 UTC,
+  # so the hold-out stops at the last complete day: hours after the gap would count as quiet.
   train_start: "2023-01-01"
   train_end: "2026-02-28"
   threshold_window_start: "2025-09-01"   # F1 threshold tuned here (inside train), then frozen
   holdout_start: "2026-03-01"
-  holdout_end: "2026-07-31"
+  holdout_end: "2026-08-28"
 m1:
   registered_model: kyiv-m1-start-risk
   model:

@@ -11,7 +11,7 @@ import pandas as pd
 from kyiv_alerts.batch import Batch
 
 OFFICIAL_FILE = "official_data_en.csv"
-VOLUNTEER_FILE = "volunteer_data_en.csv"
+VOLUNTEER_FILE = "volunteer_data_en.csv"  # cross-checks only, not a pipeline source
 
 RAW_COLUMNS = [
     "oblast", "raion", "hromada", "level", "started_at", "finished_at", "source", "naive"
@@ -53,11 +53,3 @@ def official_slice(raw_dir: Path, batch: Batch) -> pd.DataFrame | None:
     df["naive"] = "False"
     return _slice(df[RAW_COLUMNS], batch)
 
-
-def volunteer_slice(raw_dir: Path, batch: Batch) -> pd.DataFrame | None:
-    df = _read(raw_dir / VOLUNTEER_FILE).rename(columns={"region": "oblast"})
-    df["raion"] = ""
-    df["hromada"] = ""
-    df["level"] = "oblast"
-    df["source"] = "volunteer"
-    return _slice(df[RAW_COLUMNS], batch)

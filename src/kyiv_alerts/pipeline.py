@@ -18,7 +18,7 @@ from kyiv_alerts.sources import alerts_in_ua, dataset
 from kyiv_alerts.storage import Lake, sha256
 from kyiv_alerts.validate import validate_raw
 
-SOURCES = ("official", "volunteer", "alerts_in_ua")
+SOURCES = ("official", "alerts_in_ua")
 
 
 def raw_key(batch: Batch, source: str) -> str:
@@ -42,8 +42,9 @@ def extract(
 ) -> dict:
     """Write the batch's raw rows to the lake once; reruns reuse that immutable copy.
 
-    Source order: the pinned official file, then the pinned volunteer file (both
-    must cover the whole month), then the alerts.in.ua API if a token is set.
+    Source order: the pinned official file (must cover the whole month), then the
+    alerts.in.ua API if a token is set. The volunteer file is kept for cross-checks
+    only: it is oblast-level and splits alerts differently (README, "Sources").
     """
     lake = Lake(settings)
     if raw_override:
@@ -63,15 +64,13 @@ def extract(
                         "rows": rows, "reused": True}  # fmt: skip
 
     df, source = dataset.official_slice(settings.raw_data_dir, batch), "official"
-    if df is None:
-        df, source = dataset.volunteer_slice(settings.raw_data_dir, batch), "volunteer"
     if df is None and settings.alerts_in_ua_token:
         alerts = alerts_in_ua.fetch_month_ago(settings.alerts_in_ua_token)
         lake.put(f"raw/alerts/{batch.month}/alerts_in_ua.json", json.dumps(alerts).encode())
         df, source = alerts_in_ua.to_raw_rows(alerts, batch), "alerts_in_ua"
     if df is None:
         raise ValueError(
-            f"no source covers {batch.month}: the pinned files end earlier and "
+            f"no source covers {batch.month}: the pinned official file ends 2026-09-07 and "
             "ALERTS_IN_UA_TOKEN is not set"
         )
     key = raw_key(batch, source)

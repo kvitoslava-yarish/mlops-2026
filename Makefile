@@ -6,7 +6,7 @@ export
 COMPOSE  := docker compose
 MONTH    ?= 2025-06
 FROM     ?= 2022-03
-TO       ?= 2026-09
+TO       ?= 2026-08
 MODEL    ?= kyiv-m1-start-risk
 ALIAS    ?= champion
 

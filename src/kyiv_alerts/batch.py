@@ -1,5 +1,3 @@
-"""The batch is one calendar month in UTC, taken from the run, never from the clock."""
-
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta

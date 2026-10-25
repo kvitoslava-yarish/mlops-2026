@@ -16,6 +16,10 @@ FIRST_BATCH = "2022-03"
 MAX_INVALID_SHARE = 0.01
 MAX_SIZE_DEVIATION = 0.5
 MAX_STALENESS_H = 48
+# Upstream gaps reviewed and accepted, with the staleness limit that applies instead.
+ACCEPTED_GAPS = {
+    "2026-08": (72, "official file has no alerts after 2026-08-29 05:00 UTC"),
+}
 
 
 class QualityGateError(Exception):
@@ -67,10 +71,10 @@ def run_gate(conn, batch: Batch, counts: dict) -> list[Check]:
 
     newest = q("SELECT max(started_at) FROM dwh.alerts WHERE batch_month=%s", m)
     stale_h = None if newest is None else round((batch.end - newest).total_seconds() / 3600, 1)
-    checks.append(
-        Check("hours_since_newest_alert", stale_h, f"<= {MAX_STALENESS_H}",
-              stale_h is not None and stale_h <= MAX_STALENESS_H)
-    )  # fmt: skip
+    limit_h, reason = ACCEPTED_GAPS.get(m, (MAX_STALENESS_H, ""))
+    limit = f"<= {limit_h}" + (f" (accepted gap: {reason})" if reason else "")
+    ok = stale_h is not None and stale_h <= limit_h
+    checks.append(Check("hours_since_newest_alert", stale_h, limit, ok))
 
     kyiv = q("SELECT count(*) FROM dwh.alerts WHERE batch_month=%s AND oblast=%s", m, KYIV)
     checks.append(Check("kyiv_alerts", kyiv, ">= 1", kyiv >= 1))
