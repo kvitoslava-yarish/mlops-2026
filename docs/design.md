@@ -518,7 +518,7 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 
 **Pipeline.** `alerts_etl` backfills 54 monthly batches (2022-03 … 2026-08) in ~7 min; all pass the gate. The first run also failed 2026-08 (official file stops 2026-08-29 05:00 UTC) and 2026-09 (volunteer source, 2.20× the 3-month median); 2026-08 was then accepted as a documented gap and 2026-09 removed (5.2). A broken copy of 2025-06 (30% of ends before starts) passed `validate` and failed `quality_check` on `invalid_share` = 0.37. Rerunning 2025-06 twice gave identical counts (1,440 episodes, 720 M1 rows, 34 M2 rows). Evidence: README §2–3.
 
-**Experiment results** (MLflow at http://localhost:5001, experiments `kyiv-m1-start-risk` and `kyiv-m2-duration`; registered v3 of each, alias `champion`, commit `84a7cf5`; every run also carries `logging_manifest.json` and its train / hold-out datasets). Data version `183e372e0f43433c3e3e8c35624f1d44.dir` (features v2), `352f88a87031f9e22af2cce021c2a4a7.dir` (raw); train 2023-01 … 2026-02, hold-out 2026-03-01 … 2026-08-28.
+**Experiment results** (MLflow at http://localhost:5001, experiments `kyiv-m1-start-risk` and `kyiv-m2-duration`; registered v4 of each, alias `champion`, commit `51b6175`; every run also carries `logging_manifest.json` and its train / hold-out datasets). Data version `183e372e0f43433c3e3e8c35624f1d44.dir` (features v2), `352f88a87031f9e22af2cce021c2a4a7.dir` (raw); train 2023-01 … 2026-02, hold-out 2026-03-01 … 2026-08-28.
 
 | M1, 4,344 hours (start rate 7.3%) | Brier (main) | AUC | log-loss | F1 ±1 h |
 |---|---|---|---|---|
