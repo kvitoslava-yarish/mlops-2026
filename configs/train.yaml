@@ -1,0 +1,29 @@
+seed: 42
+split:
+  train_start: "2023-01-01"
+  train_end: "2026-02-28"        # M2: single split; M1 refits monthly (below)
+  holdout_start: "2026-03-01"
+  holdout_end: "2026-08-28"
+m1:
+  registered_model: kyiv-m1-start-risk
+  retrain: monthly
+  threshold_window_months: 6     # F1 threshold tuned on the 6 months before each fold
+  model:
+    max_iter: 200
+    learning_rate: 0.05
+    max_leaf_nodes: 15
+    min_samples_leaf: 50
+    l2_regularization: 1.0
+m2:
+  registered_model: kyiv-m2-duration
+  rule_window_days: 365
+  model:
+    max_iter: 150
+    learning_rate: 0.05
+    max_leaf_nodes: 7
+    min_samples_leaf: 20
+    l2_regularization: 1.0
+    # More neighbour oblasts under alert -> longer; more oblasts starting at once -> shorter.
+    monotonic_cst:
+      neighbours_under_alert_at_start: 1
+      oblasts_started_prev_5m: -1
