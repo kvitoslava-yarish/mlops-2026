@@ -76,7 +76,7 @@ Requirements: [uv](https://docs.astral.sh/uv/), Docker Desktop with **≥ 6 GB m
 make setup     # Python 3.12 env from uv.lock (includes DVC 3.67.1 with dvc-s3 3.3.0)
 make up        # copies .env.example to .env, builds and starts the stack, waits until healthy
 make data      # dvc pull of the raw data + checksums  (on a new machine: make data-seed first)
-make backfill  # alerts_etl for every month 2022-03 … 2026-09, oldest first (~7 min)
+make backfill  # alerts_etl for every month 2022-03 … 2026-08, oldest first (~7 min)
 make snapshot  # export passed batches to data/features, dvc add + push
 git add data/features.dvc && git commit -m "feature snapshot"
 make train     # M1 + M2: baselines vs models, logged and registered in MLflow
@@ -131,7 +131,7 @@ e705cfc6d7054b8b09999be31c7c423c    31025633  data/raw/official_data_en.csv
 
 | Task | Does | Writes |
 |---|---|---|
-| `extract` | picks the source that covers the whole month (official file → volunteer file → alerts.in.ua API if a token is set) and stores the month's raw rows once; a rerun reuses that immutable copy | MinIO `lake/raw/alerts/YYYY-MM/<source>.csv` |
+| `extract` | picks the source that covers the whole month (official file → alerts.in.ua API if a token is set) and stores the month's raw rows once; a rerun reuses that immutable copy | MinIO `lake/raw/alerts/YYYY-MM/<source>.csv` |
 | `validate` | columns, timestamp parsing, known oblasts, every row inside the month, unfinished ≤ 1% | — (fails on a broken schema) |
 | `transform` | exact duplicates, unfinished, end ≤ start; raion / hromada records merged into oblast episodes; counts per rule | MinIO `lake/clean/alerts/YYYY-MM.parquet` |
 | `load` | **delete-then-insert of the month in one transaction**, plus the audit row | `dwh.alerts`, `dwh.batch_audit` |
@@ -143,7 +143,7 @@ e705cfc6d7054b8b09999be31c7c423c    31025633  data/raw/official_data_en.csv
 ```bash
 make run MONTH=2025-06            # one month, waits for the result
 make row-counts MONTH=2025-06     # rows for that month in each table + min/max start
-make backfill FROM=2022-03 TO=2026-09
+make backfill FROM=2022-03 TO=2026-08
 ```
 
 Triggering by logical date also works, with one Airflow subtlety: a *manual* run gets the interval that **ends** at its logical date, so `airflow dags trigger alerts_etl --logical-date 2025-07-01T00:00:00+00:00` processes June 2025 (scheduled and backfill runs are named by the interval start, e.g. `backfill__2025-07-01…` = logical date 2025-06-01 = June). The `batch_month` param avoids the ambiguity; in the UI use *Trigger* → *batch_month*.
@@ -185,14 +185,14 @@ run 2: manual__2025-06__20261024T205240  success
 
 ### Sources
 
-- **Official file** (commit `58ee75b`): months 2022-03 … 2026-08.
-- **Volunteer file** (commit `346bcff`): months the official file does not cover — 2026-09.
-- **alerts.in.ua** (`ALERTS_IN_UA_TOKEN` in `.env`): months no pinned file covers. `month_ago` returns only the last 30 days, so a month has to be fetched within 30 days of its end; the JSON is kept in the lake as fetched and reused on rerun. `make api-smoke` checks the token with one request.
+- **Official file** (commit `58ee75b`): months 2022-03 … 2026-08, the only pinned source the pipeline uses. Its last two days are missing (no alerts after 2026-08-29 05:00 UTC); accepted, see §3.
+- **Volunteer file** (commit `346bcff`): DVC-tracked for cross-checks only, not a pipeline source. It is oblast-level and splits alerts into ~1.3–1.8× more episodes than the official file, so mixing it in would change what the features mean.
+- **alerts.in.ua** (`ALERTS_IN_UA_TOKEN` in `.env`): 2026-09 onwards. `month_ago` returns only the last 30 days, so a month has to be fetched within 30 days of its end; the JSON is kept in the lake as fetched and reused on rerun. `make api-smoke` checks the token with one request.
 - **Live alerts without a token** ([Ubilling Aerial Alerts API](https://wiki.ubilling.net.ua/doku.php?id=aerialalertsapi), `?source=aiu&raw`): the alerts.in.ua active-alerts feed relayed by Ubilling, with exact `started_at`, raion level and red/yellow `alert_level`; limit 2 req/s. Only current alerts, no history, so it does not replace `month_ago` for back-fill; it is the Lab 4 poller's source (backup `source=ual`). The `default` source is not used: its timestamps are `1970-01-01`.
 
 ### Backfill result
 
-`make backfill FROM=2022-03 TO=2026-09`: 55 monthly runs, ~7 minutes, **53 passed the gate, 2 failed for real reasons** (below). `dwh.batch_audit` keeps the source, raw sha256, row counts per cleaning rule and the gate report of every month:
+`make backfill FROM=2022-03 TO=2026-08`: 54 monthly runs, ~7 minutes, **all 54 pass the gate** (2026-08 with its accepted gap, §3). `dwh.batch_audit` keeps the source, raw sha256, row counts per cleaning rule and the gate report of every month:
 
 ```sql
 -- docker compose exec postgres psql -U warehouse -d warehouse
@@ -200,7 +200,7 @@ SELECT batch_month, source, rows_raw, rows_duplicate, rows_bad_time, rows_clean,
 FROM dwh.batch_audit ORDER BY batch_month;
 ```
 
-Unpausing the DAG also makes Airflow schedule the latest complete interval (2026-09) right away; if that run comes before the backfill it fails on `previous_batch_rows` (no lookback yet), and the backfill reruns it.
+Unpausing the DAG also makes Airflow schedule the latest complete interval (2026-09) right away. Until `ALERTS_IN_UA_TOKEN` is set it fails in `extract` ("no source covers 2026-09"), which is expected.
 
 ## 3. Quality gate
 
@@ -211,7 +211,7 @@ Unpausing the DAG also makes Airflow schedule the latest complete interval (2026
 | invalid records (unfinished or end ≤ start) after de-duplication | ≤ 1% |
 | clean rows vs median of the last 3 passed batches | within ±50% |
 | duplicate (oblast, start) in the warehouse | 0 |
-| hours between the newest alert and month end | ≤ 48 |
+| hours between the newest alert and month end | ≤ 48 (2026-08: ≤ 72, accepted gap) |
 | Kyiv alerts in the month | ≥ 1 |
 | previous month loaded (feature lookback) | > 0 rows |
 | M1 rows = hours in the month; M2 rows = Kyiv alerts | equal |
@@ -245,16 +245,14 @@ quality_check log:
 |---|---|
 | ![quality_check failed](docs/screenshots/gate_failed.png) | ![successful run graph](docs/screenshots/run_success.png) |
 
-**Caught for real:** the backfill stopped two real batches.
+**Caught for real.** The first backfill also stopped two real batches, which led to two decisions:
 
-| Batch | Failed check | Why |
-|---|---|---|
-| 2026-08 | `hours_since_newest_alert` = 67.1 (limit 48) | the official file has no alerts after 2026-08-29 05:00 UTC, while the volunteer file has ~170 a day: an upstream gap, the "stale extract" case |
-| 2026-09 | `rows_vs_3m_median` = 2.20 (limit 1 ± 0.5) | the only source is the volunteer file, which splits alerts into ~2× more oblast episodes than the official one: a source switch |
+| Batch | Failed check | Why | Decision |
+|---|---|---|---|
+| 2026-08 | `hours_since_newest_alert` = 67.1 (limit 48) | the official file has no alerts after 2026-08-29 05:00 UTC, while the volunteer file has ~170 a day: an upstream gap, the "stale extract" case | accepted: `ACCEPTED_GAPS` in [quality.py](src/kyiv_alerts/quality.py) sets 72 h for this month only and the gate report records the reason; the hold-out stops on 2026-08-28 so the missing hours are not scored as quiet |
+| 2026-09 | `rows_vs_3m_median` = 2.20 (limit 1 ± 0.5) | the only source was the volunteer file, which splits alerts into ~2× more oblast episodes: a source switch | rejected: the volunteer file was removed as a pipeline source and the batch deleted; 2026-09 and 2026-10 come from alerts.in.ua once the token arrives |
 
 Note the bad batch passed the size check (0.996), because merged episodes hide dropped records. That is why the gate checks the invalid share separately.
-
-Both stay out of training. alerts.in.ua data (raion level, like the official file) is the planned replacement once the token is set. From Lab 4, the poller's own log of the live feed (also raion level) adds new months going forward.
 
 ## 4. Feature tables
 
@@ -273,28 +271,28 @@ point-in-time correct (returned the earlier row A): True
 
 ## 5. Baseline vs model (time split)
 
-Train 2023-01-01 … 2026-02-28, hold-out 2026-03-01 … 2026-07-31 (2026-08 failed the gate). Why a time split and these dates: [design.md §5.4](docs/design.md#54-experimentation-and-validation). Lower is better for Brier, log-loss and pinball.
+Train 2023-01-01 … 2026-02-28, hold-out 2026-03-01 … 2026-08-28 (the official file stops on 2026-08-29). Why a time split and these dates: [design.md §5.4](docs/design.md#54-experimentation-and-validation). Lower is better for Brier, log-loss and pinball.
 
-Training data version `data_version = 409fdd7f7d6007529adcc81bbc09678f.dir` (feature_version v2; batches 2022-03 … 2026-07 that passed the gate). Registered as `kyiv-m1-start-risk` v1 and `kyiv-m2-duration` v1 from commit `52e9e08`.
+Training data version `data_version = 183e372e0f43433c3e3e8c35624f1d44.dir` (feature_version v2; batches 2022-03 … 2026-08). Registered as `kyiv-m1-start-risk` v2 and `kyiv-m2-duration` v2 (alias `champion`) from commit `dc85811`.
 
-**M1 — start risk**, 3,672 hold-out hours, an alert started in 6.3% of them. Train: 27,720 hours.
+**M1 — start risk**, 4,344 hold-out hours, an alert started in 7.3% of them. Train: 27,720 hours.
 
 | | Brier ↓ (main) | AUC ↑ | log-loss ↓ | F1 ±1 h ↑ |
 |---|---|---|---|---|
-| Trivial: start rate by hour of day | **0.05917** | **0.562** | 0.2360 | 0.307 |
-| Rule: same hour, last 30 days | 0.06068 | 0.514 | 0.3187 | 0.291 |
-| Model: HistGradientBoostingClassifier | 0.05918 | 0.561 | **0.2354** | **0.309** |
+| Trivial: start rate by hour of day | 0.06748 | 0.568 | 0.2629 | 0.335 |
+| Rule: same hour, last 30 days | 0.06817 | 0.549 | 0.3423 | 0.339 |
+| Model: HistGradientBoostingClassifier | **0.06701** | **0.572** | **0.2595** | **0.345** |
 
-**The trivial baseline beats the model on the main metric**, by 0.00001 Brier: in practice a tie. The model is marginally better on log-loss and F1, marginally worse on AUC. The 30-day rule is worse than both: one month of history is too noisy per hour. Alert history alone does not predict *when* the next Kyiv alert starts any better than the time of day, and AUC stays below the 0.60 target. The Telegram features (Lab 3) are the bet; until then the hour-of-day profile is the honest M1.
+The model beats both baselines on every metric, but by little: 0.0005 Brier (0.7%) below the hour-of-day profile, and AUC stays below the 0.60 target. With a hold-out that ended on 2026-07-31 the two were tied (0.05918 vs 0.05917), so the edge comes from August, the busiest month (90 Kyiv alerts). It is not yet a robust win. The 30-day rule is worse than the static profile on Brier. The Telegram features (Lab 3) are the bet for a real improvement.
 
-**M2 — duration**, 237 hold-out Kyiv alerts with a known end. Train: 1,413 alerts.
+**M2 — duration**, 325 hold-out Kyiv alerts with a known end. Train: 1,413 alerts.
 
 | | pinball P50 ↓ | pinball P90 ↓ (main) | P50 within ±15 min ↑ | P90 kept (target 85–95%) | P90 width ↓ |
 |---|---|---|---|---|---|
-| Rule: last-12-months P50 / P90 (33 / 224 min) | 15.96 | 21.67 | 49.4% | 97.0% | 224 min |
-| Model: quantile HistGradientBoosting | **15.35** | **14.65** | **51.9%** | **94.1%** | **142 min** |
+| Rule: last-12-months P50 / P90 (33 / 224 min) | 16.13 | 21.39 | 48.9% | 97.5% | 224 min |
+| Model: quantile HistGradientBoosting | **15.68** | **15.00** | **49.8%** | **92.9%** | **136 min** |
 
-The model beats the rule on every metric: P90 pinball is 32% lower, P90 shrinks from 224 to 142 min and still holds for 94.1% of alerts (inside the target band; the rule's 97% is too wide). With v1 features (all 24 oblasts) the model lost to the rule on P50; restricting the regional features to Kyiv's neighbours fixed that.
+The model beats the rule on every metric: P90 pinball is 30% lower, P90 shrinks from 224 to 136 min and still holds for 92.9% of alerts (inside the target band; the rule's 97.5% is too wide). With v1 features (all 24 oblasts) the model lost to the rule on P50; restricting the regional features to Kyiv's neighbours fixed that.
 
 ## 6. Experiment tracking and the registry
 
@@ -323,20 +321,20 @@ make reproduce MODEL=kyiv-m2-duration ALIAS=champion
 
 ```
 $ make reproduce MODEL=kyiv-m1-start-risk ALIAS=champion
-kyiv-m1-start-risk v1: run 60908a72c76d4ab39f9720e0256feb8d, commit 52e9e08bc67cb15436385515788f6ec067bbec89, data 409fdd7f7d6007529adcc81bbc09678f.dir
-$ git worktree add --detach /var/folders/.../kyiv-repro-j97hglkv/repo 52e9e08bc67cb15436385515788f6ec067bbec89
+kyiv-m1-start-risk v2: run e615a4e87b2243ec8ed2ad494d9b0d15, commit dc858115c8644417dad46928ee4bf222018a0835, data 183e372e0f43433c3e3e8c35624f1d44.dir
+$ git worktree add --detach /var/folders/.../kyiv-repro-…/repo dc858115c8644417dad46928ee4bf222018a0835
 $ dvc pull data/features.dvc
 3 files fetched and 2 files added
-$ uv run --frozen python -m kyiv_alerts.train --model m1 --no-register --reproduces 60908a72c76d4ab39f9720e0256feb8d ...
-$ git worktree remove --force /var/folders/.../kyiv-repro-j97hglkv/repo
-holdout_brier_model: registered 0.059184, reproduced 0.059184, |diff| 0.00e+00 (tolerance 0.0001) -> PASS
-reproduction run: 9a44bbf3231447d1965d397513677cf3
+$ uv run --frozen python -m kyiv_alerts.train --model m1 --no-register --reproduces e615a4e87b2243ec8ed2ad494d9b0d15 ...
+$ git worktree remove --force /var/folders/.../kyiv-repro-…/repo
+holdout_brier_model: registered 0.067009, reproduced 0.067009, |diff| 0.00e+00 (tolerance 0.0001) -> PASS
+reproduction run: 75f87013f7c4422a88051c53a74c8c6d
 
 $ make reproduce MODEL=kyiv-m2-duration ALIAS=champion
-kyiv-m2-duration v1: run c587fb89091d461ebc758738630eef58, commit 52e9e08bc67cb15436385515788f6ec067bbec89, data 409fdd7f7d6007529adcc81bbc09678f.dir
+kyiv-m2-duration v2: run 9394c1b759de4e6ab1e5972c28f6453d, commit dc858115c8644417dad46928ee4bf222018a0835, data 183e372e0f43433c3e3e8c35624f1d44.dir
 ...
-holdout_pinball_90_model: registered 14.646812, reproduced 14.646812, |diff| 0.00e+00 (tolerance 0.1) -> PASS
-reproduction run: 2e6f98c8cd004f3681f1847be2fe3749
+holdout_pinball_90_model: registered 14.996139, reproduced 14.996139, |diff| 0.00e+00 (tolerance 0.1) -> PASS
+reproduction run: 0fbcfa68b42e432885312e2aa02e9acc
 ```
 
 ## Repository

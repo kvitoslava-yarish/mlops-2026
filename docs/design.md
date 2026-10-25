@@ -29,7 +29,7 @@ Example: at 22:00 the forecast says 00–01 h has an 11.9% chance that an alert 
 
 ## 3 Success metrics
 
-Lab 1 analysis below; the Lab 2 pipeline results (hold-out 2026-03 … 2026-07) are in 7.2. Hold-out 2026-03-01 … 2026-09-05. Baseline = the simplest rule a model must beat. **Main** = metric we optimise; **guardrail** = must only stay within its limit. Formulas in [README](../README.md#how-predictions-are-scored).
+Lab 1 analysis below; the Lab 2 pipeline results (hold-out 2026-03-01 … 2026-08-28) are in 7.2. Hold-out 2026-03-01 … 2026-09-05. Baseline = the simplest rule a model must beat. **Main** = metric we optimise; **guardrail** = must only stay within its limit. Formulas in [README](../README.md#how-predictions-are-scored).
 
 **M1 — is the hourly start probability good?** Scored on 4,536 hold-out hours; an alert started in 7.5% of them. Baseline = average start rate for that hour of day.
 
@@ -144,14 +144,14 @@ The 23:58 vs 00:00 boundary case is handled in evaluation by the ±1 h tolerance
 
 | Source | Content | Version in use | Role |
 |---|---|---|---|
-| [Vadimkin dataset](https://github.com/Vadimkin/ukrainian-air-raid-sirens-dataset) `official_data_en.csv` (MIT) | official alerts, UTC, oblast / raion / hromada level; 299,275 rows, 2022-03-15 … 2026-09-07 | upstream commit `58ee75b` (2026-09-08, the last update of this file) | batches 2022-03 … 2026-08: history, labels |
-| same repo `volunteer_data_en.csv` | oblast-level alerts, `naive` = guessed end; 9.1 MB, 118,544 rows, 2022-02-25 … 2026-10-24 | upstream commit `346bcff` (2026-10-24) | batches the official file does not cover (2026-09) |
-| [alerts.in.ua API](https://devs.alerts.in.ua/) `regions/{uid}/alerts/month_ago.json` | finished alerts of the last 30 days, per oblast (25 requests, 2/min) | stored as fetched in the lake, reused on rerun | months no pinned file covers; needs `ALERTS_IN_UA_TOKEN` |
+| [Vadimkin dataset](https://github.com/Vadimkin/ukrainian-air-raid-sirens-dataset) `official_data_en.csv` (MIT) | official alerts, UTC, oblast / raion / hromada level; 299,275 rows, 2022-03-15 … 2026-09-07 | upstream commit `58ee75b` (2026-09-08, the last update of this file) | batches 2022-03 … 2026-08 (the only pipeline source): history, labels |
+| same repo `volunteer_data_en.csv` | oblast-level alerts, `naive` = guessed end; 9.1 MB, 118,544 rows, 2022-02-25 … 2026-10-24 | upstream commit `346bcff` (2026-10-24) | cross-checks only (coarser: 1.3–1.8× more episodes), not a pipeline source |
+| [alerts.in.ua API](https://devs.alerts.in.ua/) `regions/{uid}/alerts/month_ago.json` | finished alerts of the last 30 days, per oblast (25 requests, 2/min) | stored as fetched in the lake, reused on rerun | 2026-09 onwards; needs `ALERTS_IN_UA_TOKEN` |
 | [Ubilling Aerial Alerts API](https://wiki.ubilling.net.ua/doku.php?id=aerialalertsapi), `?source=aiu&raw` | **active** alerts as published by alerts.in.ua, no token: `started_at` (exact, UTC), `location_type` (oblast / raion / hromada), `alert_type`, `alert_level` (red / yellow); no history, `finished_at` always null | live, checked 2026-10-25 | Lab 4 poller: M2 trigger, live features, own alert log (new batches and labels at raion level, like the official file) |
 | same API, `?source=ual&raw` | the same from ukrainealarm.com (`createdAt`, `alertLevel`, `type: AIR`) | live | backup when `aiu` fails or is stale |
 | Telegram [@kpszsu](https://t.me/s/kpszsu) | typed Air Force posts | — | moved to Lab 3 (with M3 and the retrieval corpus) |
 
-**Live feed check (2026-10-25).** The proxy's `default` source (Vadym Klymenko API) returns `changed: 1970-01-01` for most regions → unusable timestamps, so the poller pins `source=aiu`. Its JSON matches the alerts.in.ua API, so switching to the direct API once the token arrives changes only the URL and auth. At the same moment the `ual` cache was ~4 min older than `aiu` → every response's `cachedat` is checked (6.6). The feed lists only active alerts: an alert's end is the first poll where it is gone (±20 s). Filters: `alert_type = air_raid`; drop permanent alerts (Luhansk since 2022-04-04, Crimea since 2022-12-10), as in the dataset. The proxy has no history, so it cannot back-fill past months: batch 2026-09 still waits for alerts.in.ua `month_ago`; from Lab 4 the poller's own log produces new monthly batches.
+**Live feed check (2026-10-25).** The proxy's `default` source (Vadym Klymenko API) returns `changed: 1970-01-01` for most regions → unusable timestamps, so the poller pins `source=aiu`. Its JSON matches the alerts.in.ua API, so switching to the direct API once the token arrives changes only the URL and auth. At the same moment the `ual` cache was ~4 min older than `aiu` → every response's `cachedat` is checked (6.6). The feed lists only active alerts: an alert's end is the first poll where it is gone (±20 s). Filters: `alert_type = air_raid`; drop permanent alerts (Luhansk since 2022-04-04, Crimea since 2022-12-10), as in the dataset. The proxy has no history, so it cannot back-fill past months: batches 2026-09 and 2026-10 wait for alerts.in.ua `month_ago`; from Lab 4 the poller's own log produces new monthly batches.
 
 **Batch grain:** one calendar month in UTC, equal to the run's data interval (`CronDataIntervalTimetable("@monthly", timezone="UTC")`). A batch holds 1.7k–16k raw records → 0.8k–2.2k oblast episodes (official file) → 672–744 M1 rows (one per hour) and 6–135 M2 rows (one per Kyiv alert).
 
@@ -168,14 +168,14 @@ The 23:58 vs 00:00 boundary case is handled in evaluation by the ±1 h tolerance
 | features | PostgreSQL `features.m1_hourly`, `features.m2_alert` (`feature_version` column) | one row per hour / per Kyiv alert, label alongside | `build_features` |
 | training snapshot | `data/features/*.parquet`, `data/features.dvc` | batches whose gate passed | `make snapshot` |
 
-**Cleaning rules and rows affected (2022-03 … 2026-07, official file):** 286,702 raw records → exact duplicates 113,845 (every row appears twice until 2026-01, never after) → end ≤ start 2 → unfinished 0 → raion / hromada records merged into oblast episodes 91,740 → 81,115 episodes. Guessed ends are kept for the start and flagged `end_is_guess`; M2 labels exclude them.
+**Cleaning rules and rows affected (2022-03 … 2026-08, official file):** 297,338 raw records → exact duplicates 113,845 (every row appears twice until 2026-01, never after) → end ≤ start 2 → unfinished 0 → raion / hromada records merged into oblast episodes 100,145 → 83,346 episodes. Guessed ends are kept for the start and flagged `end_is_guess`; M2 labels exclude them.
 
 **Quality findings (measured):**
 
-- The official file has a gap: nothing after 2026-08-29 05:00 UTC, while volunteer data shows ~170 alerts a day. The gate's freshness check stops batch 2026-08 (newest alert 67 h before month end, limit 48 h), so it is not used for training.
-- Volunteer data is coarser: for the same months it gives 1.3–1.8× more oblast episodes than the official file (2026-08: 3,916 vs 2,231). Batch 2026-09, the first volunteer month, fails the size check (2.20× the median of the last 3 passed batches). A source switch is exactly what the check should catch; the batch is held out until alerts.in.ua data (raion level, like the official file) replaces it.
+- The official file has a gap: nothing after 2026-08-29 05:00 UTC, while volunteer data shows ~170 alerts a day. The gate's freshness check stopped batch 2026-08 (newest alert 67 h before month end, limit 48 h). Decision: accept the 2.8 missing days for this month (`ACCEPTED_GAPS`, limit 72 h, reason stored in the gate report) and end the hold-out on 2026-08-28, so the missing hours are not scored as quiet.
+- Volunteer data is coarser: for the same months it gives 1.3–1.8× more oblast episodes than the official file (2026-08: 3,916 vs 2,231). Batch 2026-09 built from it failed the size check (2.20× the median of the last 3 passed batches): a source switch the gate is meant to catch. Decision: the volunteer file is no longer a pipeline source; 2026-09 and 2026-10 come from alerts.in.ua.
 - Raion-level records since Nov 2025 triple the raw rows (16k vs 4–5k a month) but not the oblast episodes (1.5k), because the transform merges them.
-- Kyiv City: 2,155 alerts in 2022-03 … 2026-07; an alert started in 5.5% of hours.
+- Kyiv City: 2,245 alerts in 2022-03 … 2026-08; an alert started in 5.6% of hours.
 
 **Formats:** raw CSV as published (replayable); clean and features as typed Parquet in the lake and PostgreSQL tables (point lookups, transactional delete-then-insert); training snapshot as Parquet under DVC.
 
@@ -184,7 +184,7 @@ The 23:58 vs 00:00 boundary case is handled in evaluation by the ±1 h tolerance
 | Item | Answer |
 |---|---|
 | Time axis | UTC start/end since 2022-03-15; batch = calendar month (data interval) |
-| Hold-out | train 2023-01 … 2026-02, hold-out 2026-03 … 2026-07 (5.4) |
+| Hold-out | train 2023-01 … 2026-02, hold-out 2026-03-01 … 2026-08-28 (5.4) |
 | Label delay | 1–12 h (M1), ≤ 11.2 h (M2); all known when the monthly batch runs |
 | Data version | DVC md5 of `data/raw.dvc` and `data/features.dvc` |
 | Text surface | Air Force posts → Lab 3 |
@@ -224,7 +224,7 @@ Labels: `label_start` (M1, a Kyiv alert started in the hour) and `duration_min` 
 ### 5.4 Experimentation and validation
 
 - **Time split only.** Attacks come in waves of several days, and neighbouring hours share the same rolling features (30-day rate, last 12 h). A random split would put hours of the same attack in train and test and score the model on a wave it has already seen.
-- **Lab 2 split** (`configs/train.yaml`): train 2023-01-01 … 2026-02-28, hold-out 2026-03-01 … 2026-07-31 (3,672 hours, 237 Kyiv alerts with a valid end). 2022 is left out: early-war alerting behaved differently (raw rows halve after 2022-10). 2026-08 is excluded because its batch failed the quality gate (5.2).
+- **Lab 2 split** (`configs/train.yaml`): train 2023-01-01 … 2026-02-28, hold-out 2026-03-01 … 2026-08-28 (4,344 hours, 325 Kyiv alerts with a valid end). 2022 is left out: early-war alerting behaved differently (raw rows halve after 2022-10). The hold-out stops before the upstream gap of 2026-08-29 … 31 (5.2).
 - **F1 threshold:** tuned on 2025-09-01 … 2026-02-28 (the end of the training period), then frozen for the hold-out.
 - **As-of:** features use only alerts that started before the issue time (M1) or the alert start (M2); see 5.3.
 - **Metrics:** M1 Brier (main), AUC, log-loss, F1 ±1 h. M2 pinball q = 0.9 (main) and q = 0.5, P50 within ±15 min, P90 kept, P90 width.
@@ -245,7 +245,7 @@ Labels: `label_start` (M1, a Kyiv alert started in the hour) and `duration_min` 
 
 ```mermaid
 flowchart LR
-    vad["Vadimkin air-raid sirens dataset<br/>(GitHub, history 2022 to 2026-09)"]
+    vad["Vadimkin air-raid sirens dataset<br/>(GitHub, history 2022-03 to 2026-08)"]
     aiu["alerts.in.ua data<br/>month_ago (token) · live feed via<br/>Ubilling proxy (no token)"]
     tg["Telegram @kpszsu<br/>(Ukrainian Air Force posts)"]
     sys["Kyiv Alert Forecaster<br/>ingests, trains, serves, monitors"]
@@ -271,7 +271,7 @@ The batch side as it runs now. Marks: **version points** (DVC: raw files, traini
 flowchart TB
     subgraph SRC["Sources"]
         off["official_data_en.csv<br/>commit 58ee75b"]
-        vol["volunteer_data_en.csv<br/>commit 346bcff"]
+        vol["volunteer_data_en.csv<br/>commit 346bcff (cross-checks only)"]
         api["alerts.in.ua month_ago<br/>(token; months no file covers)"]
     end
     dvcraw[("version point: data/raw.dvc<br/>DVC remote = MinIO bucket dvc")]
@@ -489,7 +489,7 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 
 | Risk | Mitigation |
 |---|---|
-| upstream stale (official file stopped 2026-09-07) | freshness alarm; volunteer data + alerts.in.ua history; from Lab 4 the poller's own log |
+| upstream stale (official file stopped 2026-09-07) | freshness alarm; alerts.in.ua history (token); from Lab 4 the poller's own log |
 | live proxy is unofficial: can stop, rate-limit or change provider | pin `source=aiu`; backup `source=ual`; `cachedat` age check; switch to direct alerts.in.ua when the token arrives (same schema) |
 | permanent and non-air alerts in the live feed (Luhansk, Crimea, artillery) | filter `alert_type = air_raid`, drop permanent regions |
 | upstream semantics change (raion switch) | aggregation in preprocessing; raw-record PSI |
@@ -516,23 +516,23 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 
 ### 7.2 Data pipelines, versioning and baseline
 
-**Pipeline.** `alerts_etl` backfilled 55 monthly batches (2022-03 … 2026-09) in ~7 min; 53 passed the gate. Failed for real: 2026-08 (official file stops 2026-08-29 05:00 UTC; newest alert 67.1 h before month end) and 2026-09 (volunteer source; 2.20× the 3-month median). A broken copy of 2025-06 (30% of ends before starts) passed `validate` and failed `quality_check` on `invalid_share` = 0.37. Rerunning 2025-06 twice gave identical counts (1,440 episodes, 720 M1 rows, 34 M2 rows). Evidence: README §2–3.
+**Pipeline.** `alerts_etl` backfills 54 monthly batches (2022-03 … 2026-08) in ~7 min; all pass the gate. The first run also failed 2026-08 (official file stops 2026-08-29 05:00 UTC) and 2026-09 (volunteer source, 2.20× the 3-month median); 2026-08 was then accepted as a documented gap and 2026-09 removed (5.2). A broken copy of 2025-06 (30% of ends before starts) passed `validate` and failed `quality_check` on `invalid_share` = 0.37. Rerunning 2025-06 twice gave identical counts (1,440 episodes, 720 M1 rows, 34 M2 rows). Evidence: README §2–3.
 
-**Experiment results** (MLflow at http://localhost:5001, experiments `kyiv-m1-start-risk` and `kyiv-m2-duration`; registered v1 of each, alias `champion`, commit `52e9e08`). Data version `409fdd7f7d6007529adcc81bbc09678f.dir` (features v2), `352f88a87031f9e22af2cce021c2a4a7.dir` (raw); train 2023-01 … 2026-02, hold-out 2026-03 … 2026-07.
+**Experiment results** (MLflow at http://localhost:5001, experiments `kyiv-m1-start-risk` and `kyiv-m2-duration`; registered v2 of each, alias `champion`, commit `dc85811`). Data version `183e372e0f43433c3e3e8c35624f1d44.dir` (features v2), `352f88a87031f9e22af2cce021c2a4a7.dir` (raw); train 2023-01 … 2026-02, hold-out 2026-03-01 … 2026-08-28.
 
-| M1, 3,672 hours (start rate 6.3%) | Brier (main) | AUC | log-loss | F1 ±1 h |
+| M1, 4,344 hours (start rate 7.3%) | Brier (main) | AUC | log-loss | F1 ±1 h |
 |---|---|---|---|---|
-| trivial: hour-of-day rate | **0.05917** | **0.562** | 0.2360 | 0.307 |
-| rule: same hour, last 30 days | 0.06068 | 0.514 | 0.3187 | 0.291 |
-| HistGradientBoostingClassifier | 0.05918 | 0.561 | **0.2354** | **0.309** |
+| trivial: hour-of-day rate | 0.06748 | 0.568 | 0.2629 | 0.335 |
+| rule: same hour, last 30 days | 0.06817 | 0.549 | 0.3423 | 0.339 |
+| HistGradientBoostingClassifier | **0.06701** | **0.572** | **0.2595** | **0.345** |
 
-| M2, 237 alerts | pinball P50 | pinball P90 (main) | P50 ±15 min | P90 kept | P90 width |
+| M2, 325 alerts | pinball P50 | pinball P90 (main) | P50 ±15 min | P90 kept | P90 width |
 |---|---|---|---|---|---|
-| rule: last-12-months 33 / 224 min | 15.96 | 21.67 | 49.4% | 97.0% | 224 min |
-| quantile HistGradientBoosting | **15.35** | **14.65** | **51.9%** | **94.1%** | **142 min** |
+| rule: last-12-months 33 / 224 min | 16.13 | 21.39 | 48.9% | 97.5% | 224 min |
+| quantile HistGradientBoosting | **15.68** | **15.00** | **49.8%** | **92.9%** | **136 min** |
 
-- M1: the trivial hour-of-day profile ties the model on Brier (0.05917 vs 0.05918) and AUC stays below the 0.60 guardrail; history alone does not predict start times beyond the time of day. M1 stays on the baseline until Telegram features (Lab 3) beat it under the 5.4 promotion rule. The 30-day rule is worse than the static profile.
-- M2: the model beats the rule on every metric (−32% P90 pinball, P90 82 min shorter, coverage 94.1% inside the 85–95% band). Features v1 counted all 24 oblasts and lost to the rule on P50 (17.19 vs 15.96); v2 counts only Kyiv's six neighbours, which removed the near-permanent front-line alerts from the regional features.
+- M1: the model beats both baselines on every metric, but only by 0.7% Brier, and AUC stays below the 0.60 guardrail. On a hold-out ending 2026-07-31 it tied the hour-of-day profile (0.05918 vs 0.05917), so the edge comes from August, the busiest month. The 5.4 promotion rule (bootstrap CI excluding 0) would likely not accept it yet; Telegram features (Lab 3) are the bet. The 30-day rule is worse than the static profile on Brier.
+- M2: the model beats the rule on every metric (−30% P90 pinball, P90 88 min shorter, coverage 92.9% inside the 85–95% band). Features v1 counted all 24 oblasts and lost to the rule on P50; v2 counts only Kyiv's six neighbours, which removed the near-permanent front-line alerts from the regional features.
 - Reproduction: `make reproduce` retrained both registered versions from `git_commit` and `data_version` with |Δ| = 0 on the same machine (tolerance 1e-4 Brier, 0.1 min pinball).
 
 ### 7.3 Serving, monitoring and drift
