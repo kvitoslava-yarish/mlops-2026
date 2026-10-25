@@ -75,8 +75,8 @@ Why pinball is the main metric: "P90 by hour of day" is shorter (133 min) but ke
 | Category | Requirement |
 |---|---|
 | Freshness | M1 ≤ 5 min after issue; alert state ≤ 30 s; Telegram ≤ 5 min; labels daily (monitoring), monthly (training) |
-| Latency, throughput | API p95 ≤ 200 ms; M2 ≤ 60 s p95; ≤ 10 req/s **A**; alerts.in.ua ≤ 8 req/min (hard limit 12) |
-| Availability, fallback | 99%/month on Minikube **A**; baseline fallback; alerts.in.ua down > 2 min → M2 `degraded` |
+| Latency, throughput | API p95 ≤ 200 ms; M2 ≤ 60 s p95; ≤ 10 req/s **A**; live feed (Ubilling proxy) 1 request / 20 s (limit 2 req/s); alerts.in.ua history ≤ 8 req/min (hard limit 12) |
+| Availability, fallback | 99%/month on Minikube **A**; baseline fallback; live feed down or stale > 2 min → backup source `ual`, else M2 `degraded` |
 | Reproducibility | model ↔ DVC data version + git commit + params in MLflow; same inputs → same metrics (fixed seeds); `uv.lock` |
 | Adaptability | monthly retrain on expanding window + on alarm; new model enters as `challenger` (5.4) |
 | Observability without labels | labels lag ≤ 12 h (M1), ≤ ~11 h (M2, max alert 673 min); until then: input drift, prediction drift, freshness (6.6) |
@@ -85,7 +85,7 @@ Why pinball is the main metric: "P90 by hour of day" is shorter (133 min) but ke
 ### 4.3 Scope
 
 - **In:** Kyiv City; M1, M2, M3 (M3 conditional: ≥ 80% of Kyiv alerts must match a typed Air Force post, **A**, checked in Lab 3); REST API.
-- **Out:** safety advice, push notifications, red/yellow alert level as target (no history; collected from Lab 2), strike locations or air-defence data, weather (7.1).
+- **Out:** safety advice, push notifications, red/yellow alert level as target (no history; the live feed carries `alert_level`, collected by the poller from Lab 4), strike locations or air-defence data, weather (7.1).
 
 ## 5 Methodology
 
@@ -147,7 +147,11 @@ The 23:58 vs 00:00 boundary case is handled in evaluation by the ±1 h tolerance
 | [Vadimkin dataset](https://github.com/Vadimkin/ukrainian-air-raid-sirens-dataset) `official_data_en.csv` (MIT) | official alerts, UTC, oblast / raion / hromada level; 299,275 rows, 2022-03-15 … 2026-09-07 | upstream commit `58ee75b` (2026-09-08, the last update of this file) | batches 2022-03 … 2026-08: history, labels |
 | same repo `volunteer_data_en.csv` | oblast-level alerts, `naive` = guessed end; 9.1 MB, 118,544 rows, 2022-02-25 … 2026-10-24 | upstream commit `346bcff` (2026-10-24) | batches the official file does not cover (2026-09) |
 | [alerts.in.ua API](https://devs.alerts.in.ua/) `regions/{uid}/alerts/month_ago.json` | finished alerts of the last 30 days, per oblast (25 requests, 2/min) | stored as fetched in the lake, reused on rerun | months no pinned file covers; needs `ALERTS_IN_UA_TOKEN` |
+| [Ubilling Aerial Alerts API](https://wiki.ubilling.net.ua/doku.php?id=aerialalertsapi), `?source=aiu&raw` | **active** alerts as published by alerts.in.ua, no token: `started_at` (exact, UTC), `location_type` (oblast / raion / hromada), `alert_type`, `alert_level` (red / yellow); no history, `finished_at` always null | live, checked 2026-10-25 | Lab 4 poller: M2 trigger, live features, own alert log (new batches and labels at raion level, like the official file) |
+| same API, `?source=ual&raw` | the same from ukrainealarm.com (`createdAt`, `alertLevel`, `type: AIR`) | live | backup when `aiu` fails or is stale |
 | Telegram [@kpszsu](https://t.me/s/kpszsu) | typed Air Force posts | — | moved to Lab 3 (with M3 and the retrieval corpus) |
+
+**Live feed check (2026-10-25).** The proxy's `default` source (Vadym Klymenko API) returns `changed: 1970-01-01` for most regions → unusable timestamps, so the poller pins `source=aiu`. Its JSON matches the alerts.in.ua API, so switching to the direct API once the token arrives changes only the URL and auth. At the same moment the `ual` cache was ~4 min older than `aiu` → every response's `cachedat` is checked (6.6). The feed lists only active alerts: an alert's end is the first poll where it is gone (±20 s). Filters: `alert_type = air_raid`; drop permanent alerts (Luhansk since 2022-04-04, Crimea since 2022-12-10), as in the dataset. The proxy has no history, so it cannot back-fill past months: batch 2026-09 still waits for alerts.in.ua `month_ago`; from Lab 4 the poller's own log produces new monthly batches.
 
 **Batch grain:** one calendar month in UTC, equal to the run's data interval (`CronDataIntervalTimetable("@monthly", timezone="UTC")`). A batch holds 1.7k–16k raw records → 0.8k–2.2k oblast episodes (official file) → 672–744 M1 rows (one per hour) and 6–135 M2 rows (one per Kyiv alert).
 
@@ -203,7 +207,7 @@ scikit-learn only: no LightGBM / XGBoost, which need `libomp` from Homebrew on m
 | `kyiv_rate_same_hour_30d` | M1 | `dwh.alerts`, Kyiv starts in the same hour on each of the previous 30 days | same query on `dwh.alerts` + the poller's live alerts table | windowed aggregate (warehouse) |
 | `kyiv_alert_min_prev_12h` | M1 | `dwh.alerts`, Kyiv alert minutes in [t − 12 h, t) | same query + the running alert from poller state | windowed aggregate (warehouse + poller) |
 | `days_since_long_alert` | M1 | `dwh.alerts`, last Kyiv alert ≥ 180 min that had ended (cap 60) | same query | warehouse lookup |
-| `kyiv_under_alert_at_issue` | M1 | `dwh.alerts` episodes active at t | poller state (alerts.in.ua active, 20 s) | stream (poll) |
+| `kyiv_under_alert_at_issue` | M1 | `dwh.alerts` episodes active at t | poller state (live feed `source=aiu`, 20 s) | stream (poll) |
 | `oblasts_under_alert_at_issue` | M1 | `dwh.alerts` episodes active at t | poller state ← **skew risk**: different producer (6.6) | stream (poll) |
 | `oblast_starts_prev_12h` | M1 | `dwh.alerts`, episode starts in [t − 12 h, t) | poller history table ← **skew risk** | windowed aggregate (poller) |
 | `start_hour_local`, `is_night`, `weekday` | M2 | computed from the alert start | computed from the poller's start event | request |
@@ -242,7 +246,7 @@ Labels: `label_start` (M1, a Kyiv alert started in the hour) and `duration_min` 
 ```mermaid
 flowchart LR
     vad["Vadimkin air-raid sirens dataset<br/>(GitHub, history 2022 to 2026-09)"]
-    aiu["alerts.in.ua API<br/>(active alerts, last-month history)"]
+    aiu["alerts.in.ua data<br/>month_ago (token) · live feed via<br/>Ubilling proxy (no token)"]
     tg["Telegram @kpszsu<br/>(Ukrainian Air Force posts)"]
     sys["Kyiv Alert Forecaster<br/>ingests, trains, serves, monitors"]
     cli["API client<br/>(planning app later, Lab 5 agent)"]
@@ -348,7 +352,7 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    aiu["alerts.in.ua API<br/>active alerts"]
+    aiu["Live alerts feed<br/>Ubilling, source=aiu (no token)"]
     subgraph laptop["Laptop · Minikube — always-on (online) side"]
         reg["<b>Image registry</b><br/><i>AWS: ECR</i>"]
         poll["<b>alerts-poller</b> container<br/><i>AWS: EKS</i>"]
@@ -403,12 +407,12 @@ Lab 3 adds pgvector 0.8.7 and an LLM endpoint (hosted API **A**, no local GPU).
 
 ### 6.4 Security
 
-- **Secrets live only in `.env`** (git-ignored; `.env.example` holds local placeholders): alerts.in.ua token, MinIO keys, PostgreSQL passwords, Airflow JWT secret. Kubernetes Secrets in Lab 4, a cloud secret manager in the cloud variant.
+- **Secrets live only in `.env`** (git-ignored; `.env.example` holds local placeholders): alerts.in.ua token (only for `month_ago` back-fill; the live feed needs none), MinIO keys, PostgreSQL passwords, Airflow JWT secret. Kubernetes Secrets in Lab 4, a cloud secret manager in the cloud variant.
 - **DVC:** the remote is committed in `.dvc/config` (`s3://dvc`, endpoint only); credentials come from the environment (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`, exported by the Makefile) and are never written to git.
 - **MLflow** serves artifacts through the tracking server (`--serve-artifacts`), so training clients need no object-store credentials; `--allowed-hosts` limits the Host header to localhost and the compose network.
 - **Ports bind to 127.0.0.1 only.** Airflow runs with `SIMPLE_AUTH_MANAGER_ALL_ADMINS` (no login) — acceptable on localhost, never on a shared network.
 - `POST /v1/predict/duration` is reachable only from the poller (NetworkPolicy, Lab 4); cloud read endpoints use an API key + rate limit.
-- alerts.in.ua terms: proxy the data and never expose the token; our API is that proxy.
+- alerts.in.ua terms: proxy the data and never expose the token; our API is that proxy. Ubilling asks for ≤ 2 req/s (ban risk); the poller sends 1 per 20 s.
 
 ### 6.5 Data privacy
 
@@ -427,7 +431,7 @@ Labels arrive late, so there are four layers; only the last one needs labels.
 
 | Layer | Signal | Window | Threshold | Severity |
 |---|---|---|---|---|
-| Data health | alerts.in.ua poll failing | — | > 2 min | 🔴 |
+| Data health | live-feed poll failing, or response `cachedat` older than 2 min | — | > 2 min | 🔴 |
 | | newest finished alert (catches re-reading one partition) | — | > 2 days | 🔴 |
 | | Telegram silent / unparsed posts | — / 24 h | > 6 h / > 20% | 🟡 / 🔴 |
 | | rows per batch vs 3-month median | batch | ±50% | gate fails |
@@ -475,6 +479,7 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 |---|---|
 | Vadimkin dataset (upstream) | no SLA; files pinned by commit (`58ee75b` official, `346bcff` volunteer) and by DVC hash; columns `oblast, raion, hromada, level, started_at, finished_at, source` (official) / `region, started_at, finished_at, naive` (volunteer), UTC. A schema change fails `validate`; a stale or coarser file fails `quality_check` |
 | alerts.in.ua (upstream) | token; ≤ 8 req/min (hard limit 12), history 2/min → 25 oblasts take ~13 min; `month_ago` covers only the last 30 days, so a month must be fetched within 30 days of its end; responses kept as fetched and replayed on rerun |
+| Ubilling live feed (upstream, Lab 4) | unofficial, no SLA or terms; ≤ 2 req/s; `source` pinned to `aiu` (the unnamed `default` can switch provider); `cachedat` checked; schema change → quality gate fails |
 | Air Force Telegram (upstream) | no contract; Lab 3 |
 | Feature tables (internal) | `features.m1_hourly`, `features.m2_alert`, keyed by time + `feature_version`; a new version is added alongside, never overwrites; training reads the DVC snapshot, serving (Lab 4) the same tables |
 | Model registry (internal → Lab 4) | names `kyiv-m1-start-risk`, `kyiv-m2-duration`; Lab 4 loads `models:/<name>@champion`; every version is tagged `data_version` and `git_commit`; clients set `MLFLOW_ENABLE_PROXY_MULTIPART_DOWNLOAD=false` |
@@ -484,7 +489,9 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 
 | Risk | Mitigation |
 |---|---|
-| upstream stale (official file stopped 2026-09-07) | freshness alarm; volunteer data + alerts.in.ua history |
+| upstream stale (official file stopped 2026-09-07) | freshness alarm; volunteer data + alerts.in.ua history; from Lab 4 the poller's own log |
+| live proxy is unofficial: can stop, rate-limit or change provider | pin `source=aiu`; backup `source=ual`; `cachedat` age check; switch to direct alerts.in.ua when the token arrives (same schema) |
+| permanent and non-air alerts in the live feed (Luhansk, Crimea, artillery) | filter `alert_type = air_raid`, drop permanent regions |
 | upstream semantics change (raion switch) | aggregation in preprocessing; raw-record PSI |
 | Telegram blocks scraping / changes markup | parser smoke test in gate; Telethon fallback |
 | leakage from edited or late posts | `datetime_utc < t`; compare history vs live features in Lab 4 |
@@ -504,6 +511,7 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 | One binary label per night | arbitrary threshold, no timing | rejected → hourly M1 |
 | Feast as the serving feature store | 19 features from two tables; another service on 4 GB. Its key property, point-in-time joins, is shown offline (`feature_repo/`, `make feast-demo`) | offline demo only; serving reads PostgreSQL |
 | Kafka + Spark | ~1.4 Kyiv alerts/day; 20 s polling is enough | rejected |
+| alerts.in.ua API directly for live alerts | official feed; needs a token (requested, not received) | Ubilling proxy (`source=aiu`, same schema) for now; switch when the token arrives |
 | Telethon instead of web preview | needs a personal account and a session secret | fallback only |
 
 ### 7.2 Data pipelines, versioning and baseline

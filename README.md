@@ -188,6 +188,7 @@ run 2: manual__2025-06__20261024T205240  success
 - **Official file** (commit `58ee75b`): months 2022-03 … 2026-08.
 - **Volunteer file** (commit `346bcff`): months the official file does not cover — 2026-09.
 - **alerts.in.ua** (`ALERTS_IN_UA_TOKEN` in `.env`): months no pinned file covers. `month_ago` returns only the last 30 days, so a month has to be fetched within 30 days of its end; the JSON is kept in the lake as fetched and reused on rerun. `make api-smoke` checks the token with one request.
+- **Live alerts without a token** ([Ubilling Aerial Alerts API](https://wiki.ubilling.net.ua/doku.php?id=aerialalertsapi), `?source=aiu&raw`): the alerts.in.ua active-alerts feed relayed by Ubilling, with exact `started_at`, raion level and red/yellow `alert_level`; limit 2 req/s. Only current alerts, no history, so it does not replace `month_ago` for back-fill; it is the Lab 4 poller's source (backup `source=ual`). The `default` source is not used: its timestamps are `1970-01-01`.
 
 ### Backfill result
 
@@ -253,7 +254,7 @@ quality_check log:
 
 Note the bad batch passed the size check (0.996), because merged episodes hide dropped records. That is why the gate checks the invalid share separately.
 
-Both stay out of training. alerts.in.ua data (raion level, like the official file) is the planned replacement once the token is set.
+Both stay out of training. alerts.in.ua data (raion level, like the official file) is the planned replacement once the token is set. From Lab 4, the poller's own log of the live feed (also raion level) adds new months going forward.
 
 ## 4. Feature tables
 
