@@ -220,10 +220,14 @@ __marimo__/
 .streamlit/secrets.toml
 
 # --- project ---
-# raw and processed data are versioned with DVC (Lab 2), never committed to git
-data/
+# Data is versioned with DVC: git keeps data/*.dvc, DVC writes data/.gitignore for
+# the tracked directories. Nothing below is ever committed.
 *.parquet
 *.csv
+/data/fixtures/
+mlruns/
+mlartifacts/
+feature_repo/data/
 # secrets (alerts.in.ua token, Telegram session)
 .env
 *.session

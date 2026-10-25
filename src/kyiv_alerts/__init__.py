@@ -1,7 +1,8 @@
 """Kyiv air-alert forecasting system.
 
-Lab 1 contains no pipeline code yet; this package is the home for the
-ingestion, feature, training and serving code added from Lab 2 onwards.
+Lab 2: monthly alert ETL (``kyiv_alerts.pipeline``), the shared feature code
+(``kyiv_alerts.features``), training with MLflow lineage (``kyiv_alerts.train``)
+and one-command reproduction (``kyiv_alerts.reproduce``).
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

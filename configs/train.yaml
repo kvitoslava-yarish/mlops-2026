@@ -1,0 +1,27 @@
+# Training configuration; every value is logged as an MLflow param.
+seed: 42
+split:
+  # Time split (design 5.4). 2026-08 is excluded by the quality gate (upstream gap),
+  # so the hold-out is the five complete months 2026-03 .. 2026-07.
+  train_start: "2023-01-01"
+  train_end: "2026-02-28"
+  threshold_window_start: "2025-09-01"   # F1 threshold tuned here (inside train), then frozen
+  holdout_start: "2026-03-01"
+  holdout_end: "2026-07-31"
+m1:
+  registered_model: kyiv-m1-start-risk
+  model:
+    max_iter: 200
+    learning_rate: 0.05
+    max_leaf_nodes: 15
+    min_samples_leaf: 50
+    l2_regularization: 1.0
+m2:
+  registered_model: kyiv-m2-duration
+  rule_window_days: 365
+  model:
+    max_iter: 150
+    learning_rate: 0.05
+    max_leaf_nodes: 7
+    min_samples_leaf: 20
+    l2_regularization: 1.0

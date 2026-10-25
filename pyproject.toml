@@ -1,15 +1,30 @@
 [project]
 name = "kyiv-alerts"
-version = "0.1.0"
+version = "0.2.0"
 description = "Kyiv air-alert forecasting: 12-hour hourly risk forecast and alert-duration prediction (KSE MLOps 2026 course project)"
 readme = "README.md"
-requires-python = ">=3.12"
-dependencies = []
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "boto3>=1.35",
+    "mlflow==3.16.1",
+    "pandas>=2.2",
+    "psycopg2-binary>=2.9",
+    "pyarrow>=17",
+    "pyyaml>=6.0",
+    "requests>=2.32",
+    "scikit-learn>=1.6",
+]
 
 [dependency-groups]
 dev = [
+    "dvc[s3]==3.67.1",
+    "dvc-s3==3.3.0",
     "pre-commit>=4.0",
+    "pytest>=8.3",
     "ruff>=0.14",
+]
+feast = [
+    "feast==0.66.0",
 ]
 
 [build-system]
@@ -26,3 +41,6 @@ src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
