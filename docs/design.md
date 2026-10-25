@@ -558,21 +558,26 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 
 **Pipeline.** `alerts_etl` backfills 54 monthly batches (2022-03 … 2026-08) in ~7 min; all pass the gate. The first run also failed 2026-08 (official file stops 2026-08-29 05:00 UTC) and 2026-09 (volunteer source, 2.20× the 3-month median); 2026-08 was then accepted as a documented gap and 2026-09 removed (5.2). A broken copy of 2025-06 (30% of ends before starts) passed `validate` and failed `quality_check` on `invalid_share` = 0.37. Rerunning 2025-06 twice gave identical counts (1,440 episodes, 720 M1 rows, 34 M2 rows). Evidence: README §2–3.
 
-**Experiment results** (MLflow at http://localhost:5001, experiments `kyiv-m1-start-risk` and `kyiv-m2-duration`; registered v4 of each, alias `champion`, commit `51b6175`; every run also carries `logging_manifest.json` and its train / hold-out datasets). Data version `183e372e0f43433c3e3e8c35624f1d44.dir` (features v2), `352f88a87031f9e22af2cce021c2a4a7.dir` (raw); train 2023-01 … 2026-02, hold-out 2026-03-01 … 2026-08-28.
+**Experiment results** (MLflow at http://localhost:5001, experiments `kyiv-m1-start-risk` and `kyiv-m2-duration`; registered v5 of each, alias `champion`, commit `4134e18`; every run carries `logging_manifest.json`, its train / hold-out datasets and, for M1, `metrics_by_lead.json`). Data version `3e7de26af5034174fa82e86bb10110d9.dir` (features v3), `352f88a87031f9e22af2cce021c2a4a7.dir` (raw); hold-out 2026-03-01 … 2026-08-28; M1 refit monthly on all data from 2023-01, M2 trained 2023-01 … 2026-02.
 
-| M1, 4,344 hours (start rate 7.3%) | Brier (main) | AUC | log-loss | F1 ±1 h |
+| M1, 6-h forecast, 4,344 hours (start rate 7.3%) | Brier (main) | AUC | log-loss | F1 ±1 h |
 |---|---|---|---|---|
-| trivial: hour-of-day rate | 0.06748 | 0.568 | 0.2629 | 0.335 |
-| rule: same hour, last 30 days | 0.06817 | 0.549 | 0.3423 | 0.339 |
-| HistGradientBoostingClassifier | **0.06701** | **0.572** | **0.2595** | **0.345** |
+| trivial: hour-of-day rate | 0.06744 | 0.570 | 0.2625 | **0.351** |
+| rule: same hour, last 30 days | 0.06817 | 0.549 | 0.3423 | 0.323 |
+| HistGradientBoostingClassifier, monthly refit | **0.06655** | **0.614** | **0.2554** | 0.339 |
+
+| M1 by lead hour | 0 | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|---|
+| Brier model / trivial | 0.0541 / 0.0559 | 0.0630 / 0.0634 | 0.0808 / 0.0820 | 0.0589 / 0.0595 | 0.0616 / 0.0623 | 0.0810 / 0.0816 |
+| AUC model / trivial | 0.707 / 0.522 | 0.599 / 0.549 | 0.616 / 0.627 | 0.609 / 0.551 | 0.576 / 0.527 | 0.543 / 0.540 |
 
 | M2, 325 alerts | pinball P50 | pinball P90 (main) | P50 ±15 min | P90 kept | P90 width |
 |---|---|---|---|---|---|
-| rule: last-12-months 33 / 224 min | 16.13 | 21.39 | 48.9% | 97.5% | 224 min |
-| quantile HistGradientBoosting | **15.68** | **15.00** | **49.8%** | **92.9%** | **136 min** |
+| rule: last-12-months 33 / 224 min | 16.13 | 21.39 | **48.9%** | 97.5% | 224 min |
+| quantile GBM, monotonic, + `oblasts_started_prev_5m` | **15.83** | **14.72** | 48.3% | 92.3% | **133 min** |
 
-- M1: the model beats both baselines on every metric, but only by 0.7% Brier, and AUC stays below the 0.60 guardrail. On a hold-out ending 2026-07-31 it tied the hour-of-day profile (0.05918 vs 0.05917), so the edge comes from August, the busiest month. The 5.4 promotion rule (bootstrap CI excluding 0) would likely not accept it yet; Telegram features (Lab 3) are the bet. The 30-day rule is worse than the static profile on Brier.
-- M2: the model beats the rule on every metric (−30% P90 pinball, P90 88 min shorter, coverage 92.9% inside the 85–95% band). Features v1 counted all 24 oblasts and lost to the rule on P50; v2 counts only Kyiv's six neighbours, which removed the near-permanent front-line alerts from the regional features.
+- M1: with the 6-h horizon and monthly refits the model beats the hour-of-day profile by 1.3% Brier and at every lead, and clears the 0.60 AUC guardrail (0.614), in line with the horizon analysis in 5.1 (1.3%, 0.610). Skill sits in lead 0 (AUC 0.71) and fades to 0.54 by lead 5. The trivial profile still wins on F1 and on AUC at lead 2. Whether the gain survives the 5.4 promotion rule (bootstrap CI) is a Lab 4 check.
+- M2: the model wins the main metric (−31% P90 pinball, P90 91 min shorter, coverage 92.3% inside the band); the rule is marginally better on P50 ±15 min. Versus v2 features (no simultaneous-starts feature, no constraints): P90 pinball 15.00 → 14.72, P50 pinball 15.68 → 15.83. The monotonic constraints hold on real hold-out alerts.
 - Reproduction: `make reproduce` retrained both registered versions from `git_commit` and `data_version` with |Δ| = 0 on the same machine (tolerance 1e-4 Brier, 0.1 min pinball).
 
 ### 7.3 Serving, monitoring and drift
