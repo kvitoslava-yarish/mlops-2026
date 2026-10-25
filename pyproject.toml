@@ -44,3 +44,8 @@ select = ["E", "F", "W", "I", "B", "UP", "SIM"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # raised inside MLflow's SQLite store and schema inference, not by project code
+    "ignore:The ``noload`` loader strategy is deprecated",
+    "ignore:Hint. Inferred schema contains integer column",
+]

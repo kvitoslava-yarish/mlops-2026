@@ -1,8 +1,10 @@
 """Train M1 (start risk) and M2 (duration) against their baselines on a time split.
 
-Every run logs params, metrics for baseline(s) and model side by side, and the two
-lineage tags: ``data_version`` (DVC hash of data/features) and ``git_commit``.
-A registered model version carries the same tags; ``--champion`` moves the alias.
+Every run logs params, the train / hold-out data sets, metrics for baseline(s) and
+model side by side, and the two lineage tags: ``data_version`` (DVC hash of
+data/features) and ``git_commit``. All writes go through ``tracking.TrackedRun``,
+which also logs ``logging_manifest.json``. A registered model version carries the
+same tags; ``--champion`` moves the alias.
 
     uv run python -m kyiv_alerts.train --model all [--champion]
 """
@@ -17,23 +19,24 @@ import mlflow
 import numpy as np
 import pandas as pd
 import yaml
-from mlflow.exceptions import MlflowException
 from mlflow.models import infer_signature
-from mlflow.tracking import MlflowClient
 from sklearn.ensemble import HistGradientBoostingClassifier
 
 from kyiv_alerts import lineage, metrics
 from kyiv_alerts.config import REPO_ROOT
 from kyiv_alerts.features import FEATURE_VERSION, M1_FEATURES, M1_LABEL, M2_FEATURES, M2_LABEL
 from kyiv_alerts.models import QuantilePair
+from kyiv_alerts.tracking import TrackedRun, has_alias
 
 FEATURES_DIR = REPO_ROOT / "data" / "features"
 FEATURES_DVC = REPO_ROOT / "data" / "features.dvc"
+FEATURE_FILES = {"m1": "m1_hourly.parquet", "m2": "m2_alert.parquet"}
 RAW_DVC = REPO_ROOT / "data" / "raw.dvc"
 CHAMPION = "champion"
 # Main metric per model family (lower is better); reproduce.py compares these.
 MAIN_METRIC = {"m1": "holdout_brier_model", "m2": "holdout_pinball_90_model"}
 ONE_DAY = timedelta(days=1)
+LINEAGE_VERSION_TAGS = ("data_version", "git_commit", "raw_data_version", "feature_version")
 # Our own HistGradientBoosting trees; skops (MLflow 3 default format) must be told to load them.
 TRUSTED_TYPES = ["sklearn.ensemble._hist_gradient_boosting.predictor.TreePredictor"]
 
@@ -50,7 +53,7 @@ def time_split(df: pd.DataFrame, col: str, split: dict) -> tuple[pd.DataFrame, p
 
 
 def train_m1(cfg: dict) -> tuple:
-    df = pd.read_parquet(FEATURES_DIR / "m1_hourly.parquet")
+    df = pd.read_parquet(FEATURES_DIR / FEATURE_FILES["m1"])
     train, hold = time_split(df, "hour_start", cfg["split"])
     model = HistGradientBoostingClassifier(
         early_stopping=False, random_state=cfg["seed"], **cfg["m1"]["model"]
@@ -76,11 +79,12 @@ def train_m1(cfg: dict) -> tuple:
         "n_holdout": len(hold),
         "holdout_positive_rate": float(hold[M1_LABEL].mean()),
     }
-    return model, results, train[M1_FEATURES].head(5).astype("float64")
+    data = {"train": train[[*M1_FEATURES, M1_LABEL]], "holdout": hold[[*M1_FEATURES, M1_LABEL]]}
+    return model, results, train[M1_FEATURES].head(5).astype("float64"), data
 
 
 def train_m2(cfg: dict) -> tuple:
-    df = pd.read_parquet(FEATURES_DIR / "m2_alert.parquet")
+    df = pd.read_parquet(FEATURES_DIR / FEATURE_FILES["m2"])
     df = df[df["label_valid"]]
     train, hold = time_split(df, "alert_start", cfg["split"])
     model = QuantilePair(params=cfg["m2"]["model"], random_state=cfg["seed"])
@@ -103,7 +107,8 @@ def train_m2(cfg: dict) -> tuple:
         "rule_p50_min": rule[0],
         "rule_p90_min": rule[1],
     }
-    return model, results, train[M2_FEATURES].head(5).astype("float64")
+    data = {"train": train[[*M2_FEATURES, M2_LABEL]], "holdout": hold[[*M2_FEATURES, M2_LABEL]]}
+    return model, results, train[M2_FEATURES].head(5).astype("float64"), data
 
 
 def lineage_tags(allow_dirty: bool) -> dict:
@@ -134,53 +139,47 @@ def _params(cfg: dict, family: str) -> dict:
 
 def run_family(family: str, cfg: dict, tags: dict, args) -> dict:
     name = cfg[family]["registered_model"]
-    model, results, example = (train_m1 if family == "m1" else train_m2)(cfg)
-    mlflow.set_experiment(name)
-    with mlflow.start_run(run_name=f"{family}-{tags['git_commit'][:7]}") as run:
-        run_tags = {**tags, "model_family": family}
-        if args.reproduces:
-            run_tags["reproduces"] = args.reproduces
-        mlflow.set_tags(run_tags)
-        mlflow.log_params(_params(cfg, family))
-        mlflow.log_metrics(results)
-        mlflow.log_dict(cfg, "config/train.yaml")
-        # M1 pyfunc returns [P(no start), P(start)], not a class label.
-        log_kwargs = {"skops_trusted_types": TRUSTED_TYPES, "pyfunc_predict_fn": "predict_proba"}
-        if family == "m2":
-            log_kwargs = {
-                "code_paths": [str(Path(__file__).parent)],
-                "skops_trusted_types": [*TRUSTED_TYPES, "kyiv_alerts.models.QuantilePair"],
-            }
-        info = mlflow.sklearn.log_model(
+    label = M1_LABEL if family == "m1" else M2_LABEL
+    model, results, example, data = (train_m1 if family == "m1" else train_m2)(cfg)
+
+    run_tags = {**tags, "model_family": family}
+    if args.reproduces:
+        run_tags["reproduces"] = args.reproduces
+    # M1 pyfunc returns [P(no start), P(start)], not a class label.
+    log_kwargs = {"skops_trusted_types": TRUSTED_TYPES, "pyfunc_predict_fn": "predict_proba"}
+    if family == "m2":
+        log_kwargs = {
+            "code_paths": [str(Path(__file__).parent)],
+            "skops_trusted_types": [*TRUSTED_TYPES, "kyiv_alerts.models.QuantilePair"],
+        }
+    output = model.predict_proba(example) if family == "m1" else model.predict(example)
+
+    with TrackedRun(name, f"{family}-{tags['git_commit'][:7]}", run_tags) as run:
+        run.log_params(_params(cfg, family))
+        source = f"data/features/{FEATURE_FILES[family]}"
+        run.log_dataset(data["train"], f"{family}_train", "training", source, label)
+        run.log_dataset(data["holdout"], f"{family}_holdout", "evaluation", source, label)
+        run.log_metrics(results)
+        run.log_dict(cfg, "config/train.yaml")
+        version = run.log_sklearn_model(
             model,
-            name="model",
-            signature=infer_signature(
-                example, model.predict_proba(example) if family == "m1" else model.predict(example)
-            ),
+            registered_name=None if args.no_register else name,
+            signature=infer_signature(example, output),
             input_example=example,
-            registered_model_name=None if args.no_register else name,
             **log_kwargs,
         )
-        version = None
-        if not args.no_register:
-            version = info.registered_model_version
-            client = MlflowClient()
-            for key in ("data_version", "git_commit", "raw_data_version", "feature_version"):
-                client.set_model_version_tag(name, version, key, tags[key])
-            if args.champion or not _has_alias(client, name, CHAMPION):
-                client.set_registered_model_alias(name, CHAMPION, version)
-    summary = {"family": family, "run_id": run.info.run_id, "registered_model": name,
+        if version is not None:
+            promote = args.champion or not has_alias(name, CHAMPION)
+            run.register(
+                name,
+                version,
+                version_tags={k: tags[k] for k in LINEAGE_VERSION_TAGS},
+                alias=CHAMPION if promote else None,
+            )
+    summary = {"family": family, "run_id": run.run_id, "registered_model": name,
                "version": version, "metrics": results}  # fmt: skip
     print(json.dumps(summary, indent=2, default=str))
     return summary
-
-
-def _has_alias(client: MlflowClient, name: str, alias: str) -> bool:
-    try:
-        client.get_model_version_by_alias(name, alias)
-        return True
-    except MlflowException:
-        return False
 
 
 def main() -> None:
