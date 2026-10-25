@@ -518,22 +518,22 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 
 **Pipeline.** `alerts_etl` backfilled 55 monthly batches (2022-03 … 2026-09) in ~7 min; 53 passed the gate. Failed for real: 2026-08 (official file stops 2026-08-29 05:00 UTC; newest alert 67.1 h before month end) and 2026-09 (volunteer source; 2.20× the 3-month median). A broken copy of 2025-06 (30% of ends before starts) passed `validate` and failed `quality_check` on `invalid_share` = 0.37. Rerunning 2025-06 twice gave identical counts (1,440 episodes, 720 M1 rows, 34 M2 rows). Evidence: README §2–3.
 
-**Experiment results** (MLflow at http://localhost:5001, experiments `kyiv-m1-start-risk` and `kyiv-m2-duration`). Data version `3cf8df9332fabe0ad5a9ffed307af367.dir` (features), `352f88a87031f9e22af2cce021c2a4a7.dir` (raw); train 2023-01 … 2026-02, hold-out 2026-03 … 2026-07.
+**Experiment results** (MLflow at http://localhost:5001, experiments `kyiv-m1-start-risk` and `kyiv-m2-duration`; registered v1 of each, alias `champion`, commit `52e9e08`). Data version `409fdd7f7d6007529adcc81bbc09678f.dir` (features v2), `352f88a87031f9e22af2cce021c2a4a7.dir` (raw); train 2023-01 … 2026-02, hold-out 2026-03 … 2026-07.
 
 | M1, 3,672 hours (start rate 6.3%) | Brier (main) | AUC | log-loss | F1 ±1 h |
 |---|---|---|---|---|
-| trivial: hour-of-day rate | 0.0592 | 0.562 | 0.2360 | 0.307 |
-| rule: same hour, last 30 days | 0.0607 | 0.514 | 0.3187 | 0.291 |
-| HistGradientBoostingClassifier | **0.0589** | 0.561 | **0.2342** | 0.307 |
+| trivial: hour-of-day rate | **0.05917** | **0.562** | 0.2360 | 0.307 |
+| rule: same hour, last 30 days | 0.06068 | 0.514 | 0.3187 | 0.291 |
+| HistGradientBoostingClassifier | 0.05918 | 0.561 | **0.2354** | **0.309** |
 
 | M2, 237 alerts | pinball P50 | pinball P90 (main) | P50 ±15 min | P90 kept | P90 width |
 |---|---|---|---|---|---|
-| rule: last-12-months 33 / 224 min | **15.96** | 21.67 | **49.4%** | 97.0% | 224 min |
-| quantile HistGradientBoosting | 17.19 | **15.16** | 38.0% | 95.4% | **138 min** |
+| rule: last-12-months 33 / 224 min | 15.96 | 21.67 | 49.4% | 97.0% | 224 min |
+| quantile HistGradientBoosting | **15.35** | **14.65** | **51.9%** | **94.1%** | **142 min** |
 
-- M1: the model is better than both baselines on the main metric, but by a margin (0.0003 Brier) that the 5.4 promotion rule would not accept as significant; AUC stays below the 0.60 guardrail. History alone barely predicts start times; Telegram features are the Lab 3 bet. The 30-day rule is worse than the static hour-of-day profile.
-- M2: the model wins the main metric (−30% P90 pinball) and narrows P90 by 86 min with 95.4% coverage (just above the 85–95% band). The rule wins on P50: a hybrid (model P90, rule P50) is the honest Lab 2 recommendation.
-- Reproduction: `make reproduce` retrained both registered versions from their `git_commit` and `data_version` with |Δ| = 0 on the same machine (tolerance 1e-4 Brier, 0.1 min pinball).
+- M1: the trivial hour-of-day profile ties the model on Brier (0.05917 vs 0.05918) and AUC stays below the 0.60 guardrail; history alone does not predict start times beyond the time of day. M1 stays on the baseline until Telegram features (Lab 3) beat it under the 5.4 promotion rule. The 30-day rule is worse than the static profile.
+- M2: the model beats the rule on every metric (−32% P90 pinball, P90 82 min shorter, coverage 94.1% inside the 85–95% band). Features v1 counted all 24 oblasts and lost to the rule on P50 (17.19 vs 15.96); v2 counts only Kyiv's six neighbours, which removed the near-permanent front-line alerts from the regional features.
+- Reproduction: `make reproduce` retrained both registered versions from `git_commit` and `data_version` with |Δ| = 0 on the same machine (tolerance 1e-4 Brier, 0.1 min pinball).
 
 ### 7.3 Serving, monitoring and drift
 

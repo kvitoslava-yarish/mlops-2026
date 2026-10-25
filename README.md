@@ -264,10 +264,10 @@ Both stay out of training. alerts.in.ua data (raion level, like the official fil
 
 ```
 $ make feast-demo
-feature row A at 2026-07-22 10:00:00+03:00: {'oblasts_under_alert_at_issue': 6, 'kyiv_under_alert_at_issue': 0, 'days_since_long_alert': 16.20, 'kyiv_alert_min_prev_12h': 5.4, 'oblast_starts_prev_12h': 33}
-feature row B at 2026-07-22 22:00:00+03:00: {'oblasts_under_alert_at_issue': 8, 'kyiv_under_alert_at_issue': 0, 'days_since_long_alert': 16.70, 'kyiv_alert_min_prev_12h': 22.2, 'oblast_starts_prev_12h': 35}
+feature row A at 2026-07-22 10:00:00+03:00: {'days_since_long_alert': 16.20, 'kyiv_alert_min_prev_12h': 5.4, 'kyiv_under_alert_at_issue': 0, 'neighbours_under_alert_at_issue': 1, 'neighbour_starts_prev_12h': 12}
+feature row B at 2026-07-22 22:00:00+03:00: {'days_since_long_alert': 16.70, 'kyiv_alert_min_prev_12h': 22.2, 'kyiv_under_alert_at_issue': 0, 'neighbours_under_alert_at_issue': 2, 'neighbour_starts_prev_12h': 12}
 requested at     2026-07-22 16:00:00+03:00
-Feast returned   {'oblasts_under_alert_at_issue': 6.0, 'kyiv_under_alert_at_issue': 0.0, 'days_since_long_alert': 16.20, 'kyiv_alert_min_prev_12h': 5.4, 'oblast_starts_prev_12h': 33.0}
+Feast returned   {'days_since_long_alert': 16.20, 'kyiv_alert_min_prev_12h': 5.4, 'kyiv_under_alert_at_issue': 0.0, 'neighbours_under_alert_at_issue': 1.0, 'neighbour_starts_prev_12h': 12.0}
 point-in-time correct (returned the earlier row A): True
 ```
 
@@ -275,26 +275,26 @@ point-in-time correct (returned the earlier row A): True
 
 Train 2023-01-01 … 2026-02-28, hold-out 2026-03-01 … 2026-07-31 (2026-08 failed the gate). Why a time split and these dates: [design.md §5.4](docs/design.md#54-experimentation-and-validation). Lower is better for Brier, log-loss and pinball.
 
-Training data version `data_version = 3cf8df9332fabe0ad5a9ffed307af367.dir` (batches 2022-03 … 2026-07 that passed the gate).
+Training data version `data_version = 409fdd7f7d6007529adcc81bbc09678f.dir` (feature_version v2; batches 2022-03 … 2026-07 that passed the gate). Registered as `kyiv-m1-start-risk` v1 and `kyiv-m2-duration` v1 from commit `52e9e08`.
 
 **M1 — start risk**, 3,672 hold-out hours, an alert started in 6.3% of them. Train: 27,720 hours.
 
 | | Brier ↓ (main) | AUC ↑ | log-loss ↓ | F1 ±1 h ↑ |
 |---|---|---|---|---|
-| Trivial: start rate by hour of day | 0.0592 | **0.562** | 0.2360 | **0.307** |
-| Rule: same hour, last 30 days | 0.0607 | 0.514 | 0.3187 | 0.291 |
-| Model: HistGradientBoostingClassifier | **0.0589** | 0.561 | **0.2342** | **0.307** |
+| Trivial: start rate by hour of day | **0.05917** | **0.562** | 0.2360 | 0.307 |
+| Rule: same hour, last 30 days | 0.06068 | 0.514 | 0.3187 | 0.291 |
+| Model: HistGradientBoostingClassifier | 0.05918 | 0.561 | **0.2354** | **0.309** |
 
-The model beats both baselines on Brier and log-loss, but only by 0.0003 Brier over the hour-of-day profile, and it ties it on AUC and F1. The 30-day rule is worse than the trivial profile: one month of history is too noisy per hour. Alert history alone barely predicts *when* an alert starts; AUC stays below the 0.60 target. The Telegram features (Lab 3) are the bet.
+**The trivial baseline beats the model on the main metric**, by 0.00001 Brier: in practice a tie. The model is marginally better on log-loss and F1, marginally worse on AUC. The 30-day rule is worse than both: one month of history is too noisy per hour. Alert history alone does not predict *when* the next Kyiv alert starts any better than the time of day, and AUC stays below the 0.60 target. The Telegram features (Lab 3) are the bet; until then the hour-of-day profile is the honest M1.
 
 **M2 — duration**, 237 hold-out Kyiv alerts with a known end. Train: 1,413 alerts.
 
 | | pinball P50 ↓ | pinball P90 ↓ (main) | P50 within ±15 min ↑ | P90 kept (target 85–95%) | P90 width ↓ |
 |---|---|---|---|---|---|
-| Rule: last-12-months P50 / P90 (33 / 224 min) | **15.96** | 21.67 | **49.4%** | 97.0% | 224 min |
-| Model: quantile HistGradientBoosting | 17.19 | **15.16** | 38.0% | 95.4% | **138 min** |
+| Rule: last-12-months P50 / P90 (33 / 224 min) | 15.96 | 21.67 | 49.4% | 97.0% | 224 min |
+| Model: quantile HistGradientBoosting | **15.35** | **14.65** | **51.9%** | **94.1%** | **142 min** |
 
-The model wins the main metric: P90 pinball is 30% lower, and P90 shrinks from 224 to 138 min while still holding for 95.4% of alerts. **The rule beats the model on P50**: a constant 33 min is closer to the typical alert than the model's median. A production M2 would take P90 from the model and P50 from the rule until a better P50 model exists.
+The model beats the rule on every metric: P90 pinball is 32% lower, P90 shrinks from 224 to 142 min and still holds for 94.1% of alerts (inside the target band; the rule's 97% is too wide). With v1 features (all 24 oblasts) the model lost to the rule on P50; restricting the regional features to Kyiv's neighbours fixed that.
 
 ## 6. Experiment tracking and the registry
 
@@ -323,17 +323,20 @@ make reproduce MODEL=kyiv-m2-duration ALIAS=champion
 
 ```
 $ make reproduce MODEL=kyiv-m1-start-risk ALIAS=champion
-kyiv-m1-start-risk v1: run <run id>, commit <git_commit>, data 3cf8df9332fabe0ad5a9ffed307af367.dir
-$ git worktree add --detach /tmp/kyiv-repro-…/repo <git_commit>
+kyiv-m1-start-risk v1: run 60908a72c76d4ab39f9720e0256feb8d, commit 52e9e08bc67cb15436385515788f6ec067bbec89, data 409fdd7f7d6007529adcc81bbc09678f.dir
+$ git worktree add --detach /var/folders/.../kyiv-repro-j97hglkv/repo 52e9e08bc67cb15436385515788f6ec067bbec89
 $ dvc pull data/features.dvc
-A       data/features/
-$ uv run --frozen python -m kyiv_alerts.train --model m1 --no-register --reproduces <run id> …
-$ git worktree remove --force /tmp/kyiv-repro-…/repo
-holdout_brier_model: registered 0.058906, reproduced 0.058906, |diff| 0.00e+00 (tolerance 0.0001) -> PASS
+3 files fetched and 2 files added
+$ uv run --frozen python -m kyiv_alerts.train --model m1 --no-register --reproduces 60908a72c76d4ab39f9720e0256feb8d ...
+$ git worktree remove --force /var/folders/.../kyiv-repro-j97hglkv/repo
+holdout_brier_model: registered 0.059184, reproduced 0.059184, |diff| 0.00e+00 (tolerance 0.0001) -> PASS
+reproduction run: 9a44bbf3231447d1965d397513677cf3
 
 $ make reproduce MODEL=kyiv-m2-duration ALIAS=champion
+kyiv-m2-duration v1: run c587fb89091d461ebc758738630eef58, commit 52e9e08bc67cb15436385515788f6ec067bbec89, data 409fdd7f7d6007529adcc81bbc09678f.dir
 ...
-holdout_pinball_90_model: registered 15.159839, reproduced 15.159839, |diff| 0.00e+00 (tolerance 0.1) -> PASS
+holdout_pinball_90_model: registered 14.646812, reproduced 14.646812, |diff| 0.00e+00 (tolerance 0.1) -> PASS
+reproduction run: 2e6f98c8cd004f3681f1847be2fe3749
 ```
 
 ## Repository
