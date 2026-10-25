@@ -24,10 +24,10 @@ kyiv_state = FeatureView(
     ttl=timedelta(hours=12),
     schema=[
         Field(name="kyiv_under_alert_at_issue", dtype=Int64),
-        Field(name="oblasts_under_alert_at_issue", dtype=Int64),
+        Field(name="neighbours_under_alert_at_issue", dtype=Int64),
         Field(name="kyiv_alert_min_prev_12h", dtype=Float64),
         Field(name="days_since_long_alert", dtype=Float64),
-        Field(name="oblast_starts_prev_12h", dtype=Int64),
+        Field(name="neighbour_starts_prev_12h", dtype=Int64),
     ],
     source=kyiv_state_source,
     online=False,

@@ -20,11 +20,22 @@ import pandas as pd
 from kyiv_alerts.batch import Batch
 from kyiv_alerts.sources.dataset import KYIV, KYIV_OBLAST
 
-FEATURE_VERSION = "v1"
+FEATURE_VERSION = "v2"  # v2: "other oblasts" features count only NEIGHBOURS
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 ISSUE_HOURS = (10, 22)  # local issue times; each covers the next 12 hours
 LOOKBACK_DAYS = 60  # history the pipeline loads before the batch
 LONG_ALERT_MIN = 180
+# Oblasts whose alerts feed the neighbour features (Kyiv City itself is separate).
+NEIGHBOURS = frozenset(
+    {
+        KYIV_OBLAST,
+        "Zhytomyrska oblast",
+        "Chernihivska oblast",
+        "Cherkaska oblast",
+        "Poltavska oblast",
+        "Vinnytska oblast",
+    }
+)
 CAP_MIN = 7 * 24 * 60  # "minutes since" features are capped at one week
 HOUR, DAY = 3600, 86400
 
@@ -37,8 +48,8 @@ M1_FEATURES = [
     "kyiv_alert_min_prev_12h",
     "days_since_long_alert",
     "kyiv_under_alert_at_issue",
-    "oblasts_under_alert_at_issue",
-    "oblast_starts_prev_12h",
+    "neighbours_under_alert_at_issue",
+    "neighbour_starts_prev_12h",
 ]
 M1_LABEL = "label_start"
 
@@ -46,8 +57,8 @@ M2_FEATURES = [
     "start_hour_local",
     "is_night",
     "weekday",
-    "oblasts_under_alert_at_start",
-    "oblast_starts_prev_60m",
+    "neighbours_under_alert_at_start",
+    "neighbour_starts_prev_60m",
     "min_since_kyivska_start",
     "min_since_prev_kyiv_end",
     "prev_kyiv_duration_min",
@@ -72,11 +83,12 @@ class AlertHistory:
         start, end = epoch_s(ep["started_at"]), epoch_s(ep["finished_at"])
         kyiv = (ep["oblast"] == KYIV).to_numpy()
         kyivska = (ep["oblast"] == KYIV_OBLAST).to_numpy()
+        near = ep["oblast"].isin(NEIGHBOURS).to_numpy()
         self.kyiv_start, self.kyiv_end = start[kyiv], end[kyiv]
         self.kyiv_guess = ep["end_is_guess"].to_numpy(dtype=bool)[kyiv]
         self.kyivska_start = start[kyivska]
-        self.other_start, self.other_end = start[~kyiv], end[~kyiv]
-        self.other_oblast = pd.factorize(ep["oblast"])[0][~kyiv]
+        self.near_start, self.near_end = start[near], end[near]
+        self.near_oblast = pd.factorize(ep["oblast"])[0][near]
         self.kyiv_start_hours = set((self.kyiv_start // HOUR).tolist())
 
     # --- Kyiv City -------------------------------------------------------
@@ -117,13 +129,13 @@ class AlertHistory:
             return float(CAP_MIN)
         return min((t - self.kyivska_start[i - 1]) / 60, CAP_MIN)
 
-    # --- other oblasts -----------------------------------------------------
-    def oblasts_active(self, t: int) -> int:
-        active = (self.other_start < t) & (self.other_end > t)
-        return int(np.unique(self.other_oblast[active]).size)
+    # --- neighbour oblasts -------------------------------------------------
+    def neighbours_active(self, t: int) -> int:
+        active = (self.near_start < t) & (self.near_end > t)
+        return int(np.unique(self.near_oblast[active]).size)
 
-    def oblast_starts_between(self, a: int, b: int) -> int:
-        return int(np.searchsorted(self.other_start, b) - np.searchsorted(self.other_start, a))
+    def neighbour_starts_between(self, a: int, b: int) -> int:
+        return int(np.searchsorted(self.near_start, b) - np.searchsorted(self.near_start, a))
 
 
 def issue_time(hour_start: int) -> int:
@@ -151,8 +163,8 @@ def m1_row(history: AlertHistory, hour_start: int) -> dict:
         "kyiv_alert_min_prev_12h": history.kyiv_alert_minutes(t - 12 * HOUR, t),
         "days_since_long_alert": history.days_since_long_alert(t),
         "kyiv_under_alert_at_issue": int(history.kyiv_active(t)),
-        "oblasts_under_alert_at_issue": history.oblasts_active(t),
-        "oblast_starts_prev_12h": history.oblast_starts_between(t - 12 * HOUR, t),
+        "neighbours_under_alert_at_issue": history.neighbours_active(t),
+        "neighbour_starts_prev_12h": history.neighbour_starts_between(t - 12 * HOUR, t),
     }
 
 
@@ -164,8 +176,8 @@ def m2_row(history: AlertHistory, start: int) -> dict:
         "start_hour_local": local.hour,
         "is_night": int(local.hour >= 22 or local.hour < 6),
         "weekday": local.weekday(),
-        "oblasts_under_alert_at_start": history.oblasts_active(start),
-        "oblast_starts_prev_60m": history.oblast_starts_between(start - HOUR, start),
+        "neighbours_under_alert_at_start": history.neighbours_active(start),
+        "neighbour_starts_prev_60m": history.neighbour_starts_between(start - HOUR, start),
         "min_since_kyivska_start": history.minutes_since_kyivska_start(start),
         "min_since_prev_kyiv_end": min((start - prev[1]) / 60, CAP_MIN) if prev else CAP_MIN,
         "prev_kyiv_duration_min": (prev[1] - prev[0]) / 60 if prev else -1.0,

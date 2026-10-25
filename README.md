@@ -215,7 +215,7 @@ Unpausing the DAG also makes Airflow schedule the latest complete interval (2026
 | Kyiv alerts in the month | ≥ 1 |
 | previous month loaded (feature lookback) | > 0 rows |
 | M1 rows = hours in the month; M2 rows = Kyiv alerts | equal |
-| feature nulls; single `feature_version` | 0; `v1` |
+| feature nulls; single `feature_version` | 0; `v2` |
 
 A failed batch fails the run, is marked in `dwh.batch_audit`, and is left out of the training snapshot.
 
@@ -258,7 +258,7 @@ Both stay out of training. alerts.in.ua data (raion level, like the official fil
 
 ## 4. Feature tables
 
-`features.m1_hourly` (one row per hour) and `features.m2_alert` (one row per Kyiv alert), each with `feature_version = v1` and the label alongside. The serving-time source of every feature is in [design.md §5.3](docs/design.md#53-techniques). All features come from one module, [src/kyiv_alerts/features.py](src/kyiv_alerts/features.py), that Lab 4's service will reuse on live state.
+`features.m1_hourly` (one row per hour) and `features.m2_alert` (one row per Kyiv alert), each with `feature_version = v2` and the label alongside. Features about other regions count only Kyiv's six neighbour oblasts (Kyivska, Zhytomyrska, Chernihivska, Cherkaska, Poltavska, Vinnytska). The serving-time source of every feature is in [design.md §5.3](docs/design.md#53-techniques). All features come from one module, [src/kyiv_alerts/features.py](src/kyiv_alerts/features.py), that Lab 4's service will reuse on live state.
 
 **Optional: Feast point-in-time demo.** [feature_repo/](feature_repo/) defines entity `city` and feature view `kyiv_state` (the issue-time M1 inputs, one row per 10:00 / 22:00 issue) over the exported snapshot. `make feast-demo` asks for the state at a time between two rows and checks that Feast returns the earlier one:
 

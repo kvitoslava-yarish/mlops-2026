@@ -40,14 +40,16 @@ def test_features_ignore_alerts_after_issue_time_but_label_sees_them():
     ep = episodes(
         ("Kyiv City", "2025-06-10 20:00", "2025-06-10 22:30"),  # running at 22:00 issue
         ("Kyiv City", "2025-06-10 23:10", "2025-06-10 23:40"),  # after issue
-        ("Sumska oblast", "2025-06-10 21:30", "2025-06-10 23:00"),
+        ("Chernihivska oblast", "2025-06-10 21:30", "2025-06-10 23:00"),
+        ("Kharkivska oblast", "2025-06-10 21:00", "2025-06-10 23:00"),  # not a neighbour
     )
     h = AlertHistory(ep)
     row = m1_row(h, ts("2025-06-10 23:00"))
     assert row["lead"] == 1 and row["issue_slot"] == 22
     assert row["kyiv_under_alert_at_issue"] == 1
     assert row["kyiv_alert_min_prev_12h"] == 120  # 20:00-22:00, clipped at the issue time
-    assert row["oblasts_under_alert_at_issue"] == 1
+    assert row["neighbours_under_alert_at_issue"] == 1  # Chernihiv counts, Kharkiv does not
+    assert row["neighbour_starts_prev_12h"] == 1
     assert row["days_since_long_alert"] == 60  # the 150-min alert had not ended by 22:00
 
     m1 = build_m1(ep, batch_for("2025-06"))

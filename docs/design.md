@@ -199,7 +199,7 @@ The 23:58 vs 00:00 boundary case is handled in evaluation by the ±1 h tolerance
 
 scikit-learn only: no LightGBM / XGBoost, which need `libomp` from Homebrew on macOS. Hold-out results: 7.2.
 
-**Features and where each value comes from at serving time** (`src/kyiv_alerts/features.py`, one code path; `feature_version = v1`). Every feature is computed as of time *t* — the issue time (M1) or the alert start (M2) — from alerts that started before *t*; an alert still running at *t* counts as active, with its minutes clipped at *t*.
+**Features and where each value comes from at serving time** (`src/kyiv_alerts/features.py`, one code path; `feature_version = v2`). The features about other regions count only Kyiv's **neighbour oblasts** — Kyivska, Zhytomyrska, Chernihivska, Cherkaska, Poltavska, Vinnytska — so front-line oblasts with near-permanent local alerts do not dominate them (v1 counted all 24). Every feature is computed as of time *t* — the issue time (M1) or the alert start (M2) — from alerts that started before *t*; an alert still running at *t* counts as active, with its minutes clipped at *t*.
 
 | Feature | Model | Training source | Serving source (Lab 4) | Kind |
 |---|---|---|---|---|
@@ -208,16 +208,16 @@ scikit-learn only: no LightGBM / XGBoost, which need `libomp` from Homebrew on m
 | `kyiv_alert_min_prev_12h` | M1 | `dwh.alerts`, Kyiv alert minutes in [t − 12 h, t) | same query + the running alert from poller state | windowed aggregate (warehouse + poller) |
 | `days_since_long_alert` | M1 | `dwh.alerts`, last Kyiv alert ≥ 180 min that had ended (cap 60) | same query | warehouse lookup |
 | `kyiv_under_alert_at_issue` | M1 | `dwh.alerts` episodes active at t | poller state (live feed `source=aiu`, 20 s) | stream (poll) |
-| `oblasts_under_alert_at_issue` | M1 | `dwh.alerts` episodes active at t | poller state ← **skew risk**: different producer (6.6) | stream (poll) |
-| `oblast_starts_prev_12h` | M1 | `dwh.alerts`, episode starts in [t − 12 h, t) | poller history table ← **skew risk** | windowed aggregate (poller) |
+| `neighbours_under_alert_at_issue` | M1 | `dwh.alerts` neighbour-oblast episodes active at t (0–6) | poller state ← **skew risk**: different producer (6.6) | stream (poll) |
+| `neighbour_starts_prev_12h` | M1 | `dwh.alerts`, neighbour-oblast episode starts in [t − 12 h, t) | poller history table ← **skew risk** | windowed aggregate (poller) |
 | `start_hour_local`, `is_night`, `weekday` | M2 | computed from the alert start | computed from the poller's start event | request |
-| `oblasts_under_alert_at_start` | M2 | `dwh.alerts` episodes active at the start | poller state ← **skew risk** | stream (poll) |
-| `oblast_starts_prev_60m` | M2 | `dwh.alerts`, starts in the last 60 min | poller history table | windowed aggregate (poller) |
+| `neighbours_under_alert_at_start` | M2 | `dwh.alerts` neighbour-oblast episodes active at the start | poller state ← **skew risk** | stream (poll) |
+| `neighbour_starts_prev_60m` | M2 | `dwh.alerts`, neighbour-oblast starts in the last 60 min | poller history table | windowed aggregate (poller) |
 | `min_since_kyivska_start` | M2 | `dwh.alerts`, last Kyiv oblast start (cap 1 week) | poller history table | windowed aggregate (poller) |
 | `min_since_prev_kyiv_end`, `prev_kyiv_duration_min` | M2 | `dwh.alerts`, previous ended Kyiv alert | `dwh.alerts` + poller history | warehouse lookup |
 | `kyiv_alerts_prev_7d` | M2 | `dwh.alerts`, Kyiv starts in the last 7 days | `dwh.alerts` + poller history | windowed aggregate (warehouse) |
 
-Labels: `label_start` (M1, a Kyiv alert started in the hour) and `duration_min` (M2, `label_valid = false` when the end is a guess). Planned, not in v1: holiday and moon illumination (M1), Telegram threat features (M1, M2, M3; Lab 3).
+Labels: `label_start` (M1, a Kyiv alert started in the hour) and `duration_min` (M2, `label_valid = false` when the end is a guess). Planned, not in v2: holiday and moon illumination (M1), Telegram threat features (M1, M2, M3; Lab 3).
 
 **Point-in-time joins.** Training rows are built by the pipeline as of *t*, so no join can pull in a later row. The optional Feast demo (`feature_repo/`, 7.1) shows the same property for a feature-store lookup: a request between two issue times gets the earlier row.
 
@@ -282,7 +282,7 @@ flowchart TB
     lakeclean[("MinIO lake<br/>clean/alerts/YYYY-MM.parquet")]
     subgraph PG["PostgreSQL 16 · database warehouse"]
         dwh["dwh.alerts (oblast episodes)<br/>dwh.batch_audit (counts, gate result)"]
-        feat["features.m1_hourly · features.m2_alert<br/>feature_version = v1"]
+        feat["features.m1_hourly · features.m2_alert<br/>feature_version = v2"]
     end
     snap[("version point: data/features.dvc<br/>passed batches only")]
     train["make train → kyiv_alerts.train<br/>rule baselines + HistGradientBoosting"]
