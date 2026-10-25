@@ -20,9 +20,11 @@ import pandas as pd
 from kyiv_alerts.batch import Batch
 from kyiv_alerts.sources.dataset import KYIV, KYIV_OBLAST
 
-FEATURE_VERSION = "v2"  # v2: "other oblasts" features count only NEIGHBOURS
+FEATURE_VERSION = "v3"  # v3: 6-h M1 windows from 4 issues/day; M2 oblasts_started_prev_5m
+# (v2: "other oblasts" features count only NEIGHBOURS)
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
-ISSUE_HOURS = (10, 22)  # local issue times; each covers the next 12 hours
+ISSUE_HOURS = (4, 10, 16, 22)  # local issue times; each covers the next 6 hours
+HORIZON_H = 6
 LOOKBACK_DAYS = 60  # history the pipeline loads before the batch
 LONG_ALERT_MIN = 180
 # Oblasts whose alerts feed the neighbour features (Kyiv City itself is separate).
@@ -59,6 +61,7 @@ M2_FEATURES = [
     "weekday",
     "neighbours_under_alert_at_start",
     "neighbour_starts_prev_60m",
+    "oblasts_started_prev_5m",
     "min_since_kyivska_start",
     "min_since_prev_kyiv_end",
     "prev_kyiv_duration_min",
@@ -88,7 +91,9 @@ class AlertHistory:
         self.kyiv_guess = ep["end_is_guess"].to_numpy(dtype=bool)[kyiv]
         self.kyivska_start = start[kyivska]
         self.near_start, self.near_end = start[near], end[near]
-        self.near_oblast = pd.factorize(ep["oblast"])[0][near]
+        codes = pd.factorize(ep["oblast"])[0]
+        self.near_oblast = codes[near]
+        self.other_start, self.other_oblast = start[~kyiv], codes[~kyiv]
         self.kyiv_start_hours = set((self.kyiv_start // HOUR).tolist())
 
     # --- Kyiv City -------------------------------------------------------
@@ -137,16 +142,26 @@ class AlertHistory:
     def neighbour_starts_between(self, a: int, b: int) -> int:
         return int(np.searchsorted(self.near_start, b) - np.searchsorted(self.near_start, a))
 
+    # --- all oblasts except Kyiv City ----------------------------------------
+    def oblasts_started_between(self, a: int, b: int) -> int:
+        """Distinct oblasts anywhere in Ukraine whose alert started in [a, b] (b included:
+        oblasts that start in the same second as Kyiv are part of the same launch)."""
+        i = np.searchsorted(self.other_start, a, side="left")
+        j = np.searchsorted(self.other_start, b, side="right")
+        return int(np.unique(self.other_oblast[i:j]).size)
+
 
 def issue_time(hour_start: int) -> int:
-    """The forecast that covers this hour: 10:00 covers 10-21, 22:00 covers 22-09 (Kyiv time)."""
+    """The forecast that covers this hour (Kyiv time): the latest issue at or before it.
+
+    04:00 covers 04-09, 10:00 covers 10-15, 16:00 covers 16-21, 22:00 covers 22-03.
+    """
     local = datetime.fromtimestamp(hour_start, KYIV_TZ)
-    if local.hour >= ISSUE_HOURS[1]:
-        day, hour = local.date(), ISSUE_HOURS[1]
-    elif local.hour >= ISSUE_HOURS[0]:
-        day, hour = local.date(), ISSUE_HOURS[0]
+    earlier = [h for h in ISSUE_HOURS if h <= local.hour]
+    if earlier:
+        day, hour = local.date(), earlier[-1]
     else:
-        day, hour = local.date() - timedelta(days=1), ISSUE_HOURS[1]
+        day, hour = local.date() - timedelta(days=1), ISSUE_HOURS[-1]
     return int(datetime(day.year, day.month, day.day, hour, tzinfo=KYIV_TZ).timestamp())
 
 
@@ -178,6 +193,7 @@ def m2_row(history: AlertHistory, start: int) -> dict:
         "weekday": local.weekday(),
         "neighbours_under_alert_at_start": history.neighbours_active(start),
         "neighbour_starts_prev_60m": history.neighbour_starts_between(start - HOUR, start),
+        "oblasts_started_prev_5m": history.oblasts_started_between(start - 300, start),
         "min_since_kyivska_start": history.minutes_since_kyivska_start(start),
         "min_since_prev_kyiv_end": min((start - prev[1]) / 60, CAP_MIN) if prev else CAP_MIN,
         "prev_kyiv_duration_min": (prev[1] - prev[0]) / 60 if prev else -1.0,

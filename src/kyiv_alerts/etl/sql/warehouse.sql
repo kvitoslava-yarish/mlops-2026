@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS features.m2_alert (
     weekday                      integer          NOT NULL,
     neighbours_under_alert_at_start integer          NOT NULL,
     neighbour_starts_prev_60m       integer          NOT NULL,
+    oblasts_started_prev_5m         integer          NOT NULL,
     min_since_kyivska_start      double precision NOT NULL,
     min_since_prev_kyiv_end      double precision NOT NULL,
     prev_kyiv_duration_min       double precision NOT NULL,

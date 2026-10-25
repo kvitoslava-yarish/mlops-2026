@@ -7,7 +7,7 @@ Course project for KSE "Introduction to MLOps and ML System Design" (2026). The 
 ## Problem
 
 Kyiv alerts are known only when the siren starts, with no estimate of when the next one comes or how long it lasts.
-Twice a day (10:00 and 22:00) the system forecasts, for each of the next 12 hours, the probability that a Kyiv alert starts and the likely threat type.
+Four times a day (04:00, 10:00, 16:00 and 22:00) the system forecasts, for each of the next 6 hours, the probability that a Kyiv alert starts and the likely threat type.
 When a Kyiv alert starts, it predicts how long the alert will last.
 It learns from the public alert history of all Ukraine since 2022 and from the Ukrainian Air Force Telegram channel, retrains monthly and checks daily that the data has not changed.
 Predictions are served by a REST API for planning only; the official alert always takes precedence.
@@ -16,7 +16,7 @@ Predictions are served by a REST API for planning only; the official alert alway
 
 | Model | Question | When it runs | Output | When we learn the truth |
 |---|---|---|---|---|
-| **M1** start risk | In which of the next 12 hours is a Kyiv alert likely to **start**? | 10:00 (for 10–22) and 22:00 (for 22–10) | one probability per hour | at the end of each hour |
+| **M1** start risk | In which of the next 6 hours is a Kyiv alert likely to **start**? | 04:00, 10:00, 16:00, 22:00, each for the next 6 hours | one probability per hour | at the end of each hour |
 | **M2** duration | This alert just started: when will it end? | the moment a Kyiv alert starts | **P50** "typically ends by" and **P90** "almost surely ends by" | when the alert ends |
 | **M3** threat type | If an alert starts in that hour, what is it likely to be? | together with M1 | per hour: probability of drones, cruise missiles, ballistic | when an Air Force post names the type (Lab 3) |
 
@@ -215,7 +215,7 @@ Unpausing the DAG also makes Airflow schedule the latest complete interval (2026
 | Kyiv alerts in the month | ≥ 1 |
 | previous month loaded (feature lookback) | > 0 rows |
 | M1 rows = hours in the month; M2 rows = Kyiv alerts | equal |
-| feature nulls; single `feature_version` | 0; `v2` |
+| feature nulls; single `feature_version` | 0; `v3` |
 
 A failed batch fails the run, is marked in `dwh.batch_audit`, and is left out of the training snapshot.
 
@@ -256,9 +256,9 @@ Note the bad batch passed the size check (0.996), because merged episodes hide d
 
 ## 4. Feature tables
 
-`features.m1_hourly` (one row per hour) and `features.m2_alert` (one row per Kyiv alert), each with `feature_version = v2` and the label alongside. Features about other regions count only Kyiv's six neighbour oblasts (Kyivska, Zhytomyrska, Chernihivska, Cherkaska, Poltavska, Vinnytska). The serving-time source of every feature is in [design.md §5.3](docs/design.md#53-techniques). All features come from one module, [src/kyiv_alerts/features.py](src/kyiv_alerts/features.py), that Lab 4's service will reuse on live state.
+`features.m1_hourly` (one row per hour) and `features.m2_alert` (one row per Kyiv alert), each with `feature_version = v3` and the label alongside. Features about other regions count only Kyiv's six neighbour oblasts (Kyivska, Zhytomyrska, Chernihivska, Cherkaska, Poltavska, Vinnytska). The serving-time source of every feature is in [design.md §5.3](docs/design.md#53-techniques). All features come from one module, [src/kyiv_alerts/features.py](src/kyiv_alerts/features.py), that Lab 4's service will reuse on live state.
 
-**Optional: Feast point-in-time demo.** [feature_repo/](feature_repo/) defines entity `city` and feature view `kyiv_state` (the issue-time M1 inputs, one row per 10:00 / 22:00 issue) over the exported snapshot. `make feast-demo` asks for the state at a time between two rows and checks that Feast returns the earlier one:
+**Optional: Feast point-in-time demo.** [feature_repo/](feature_repo/) defines entity `city` and feature view `kyiv_state` (the issue-time M1 inputs, one row per 04:00 / 10:00 / 16:00 / 22:00 issue) over the exported snapshot. `make feast-demo` asks for the state at a time between two rows and checks that Feast returns the earlier one:
 
 ```
 $ make feast-demo

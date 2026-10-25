@@ -52,35 +52,80 @@ def time_split(df: pd.DataFrame, col: str, split: dict) -> tuple[pd.DataFrame, p
     return train.reset_index(drop=True), hold.reset_index(drop=True)
 
 
-def train_m1(cfg: dict) -> tuple:
-    df = pd.read_parquet(FEATURES_DIR / FEATURE_FILES["m1"])
-    train, hold = time_split(df, "hour_start", cfg["split"])
-    model = HistGradientBoostingClassifier(
+def monthly_folds(split: dict) -> list[tuple[pd.Timestamp, pd.Timestamp]]:
+    """[start, end) of each hold-out month; the last one ends after holdout_end."""
+    start, stop = _ts(split["holdout_start"]), _ts(split["holdout_end"]) + ONE_DAY
+    folds = []
+    while start < stop:
+        end = min(start + pd.offsets.MonthBegin(1), stop)
+        folds.append((start, end))
+        start = end
+    return folds
+
+
+def _fit_m1(cfg: dict, train: pd.DataFrame) -> HistGradientBoostingClassifier:
+    return HistGradientBoostingClassifier(
         early_stopping=False, random_state=cfg["seed"], **cfg["m1"]["model"]
     ).fit(train[M1_FEATURES], train[M1_LABEL])
 
+
+def _m1_methods(model, train: pd.DataFrame) -> dict:
     hour_rate = train.groupby("hour_local")[M1_LABEL].mean()
-    predict = {
+    return {
         "trivial": lambda d: d["hour_local"].map(hour_rate).to_numpy(),  # start rate by hour
         "rule": lambda d: d["kyiv_rate_same_hour_30d"].to_numpy(),  # same hour, last 30 days
         "model": lambda d: model.predict_proba(d[M1_FEATURES])[:, 1],
     }
-    tune = train[train["hour_start"] >= _ts(cfg["split"]["threshold_window_start"])]
-    results = {}
-    for name, fn in predict.items():
-        p = fn(hold)
-        scores = metrics.m1_scores(hold[M1_LABEL].to_numpy(), p)
-        thr = metrics.best_threshold(tune["hour_start"], tune[M1_LABEL].to_numpy(), fn(tune))
-        scores |= metrics.f1_tolerant(hold["hour_start"], hold[M1_LABEL].to_numpy(), p >= thr)
-        scores["threshold"] = thr
+
+
+def train_m1(cfg: dict) -> tuple:
+    """Monthly retraining, back-tested: each hold-out month is predicted by a model fit on all
+    history before it; scores are pooled over the hold-out and also reported per lead hour."""
+    df = pd.read_parquet(FEATURES_DIR / FEATURE_FILES["m1"])
+    t = pd.to_datetime(df["hour_start"], utc=True)
+    split, months = cfg["split"], cfg["m1"]["threshold_window_months"]
+    scored = []
+    for fold_start, fold_end in monthly_folds(split):
+        train = df[(t >= _ts(split["train_start"])) & (t < fold_start)]
+        test = df[(t >= fold_start) & (t < fold_end)].copy()
+        tune = train[train["hour_start"] >= fold_start - pd.DateOffset(months=months)]
+        for name, fn in _m1_methods(_fit_m1(cfg, train), train).items():
+            thr = metrics.best_threshold(tune["hour_start"], tune[M1_LABEL].to_numpy(), fn(tune))
+            test[f"p_{name}"] = fn(test)
+            test[f"flag_{name}"] = test[f"p_{name}"] >= thr
+        scored.append(test)
+    hold = pd.concat(scored, ignore_index=True)
+
+    y = hold[M1_LABEL].to_numpy()
+    results, by_lead = {}, []
+    for name in ("trivial", "rule", "model"):
+        scores = metrics.m1_scores(y, hold[f"p_{name}"].to_numpy())
+        scores |= metrics.f1_tolerant(hold["hour_start"], y, hold[f"flag_{name}"].to_numpy())
         results |= {f"holdout_{k}_{name}": v for k, v in scores.items()}
+    for lead, part in hold.groupby("lead"):
+        row = {"lead": int(lead), "hours": len(part), "positive_rate": float(part[M1_LABEL].mean())}
+        for name in ("trivial", "rule", "model"):
+            s = metrics.m1_scores(part[M1_LABEL].to_numpy(), part[f"p_{name}"].to_numpy())
+            row |= {f"brier_{name}": s["brier"], f"auc_{name}": s["auc"]}
+            results[f"holdout_brier_{name}_lead{lead}"] = s["brier"]
+            results[f"holdout_auc_{name}_lead{lead}"] = s["auc"]
+        by_lead.append(row)
+
+    # The registered model is the latest monthly refit: all history up to holdout_end.
+    final_train = df[(t >= _ts(split["train_start"])) & (t < _ts(split["holdout_end"]) + ONE_DAY)]
+    model = _fit_m1(cfg, final_train)
     results |= {
-        "n_train": len(train),
+        "n_folds": len(scored),
+        "n_train_final": len(final_train),
         "n_holdout": len(hold),
-        "holdout_positive_rate": float(hold[M1_LABEL].mean()),
+        "holdout_positive_rate": float(y.mean()),
     }
-    data = {"train": train[[*M1_FEATURES, M1_LABEL]], "holdout": hold[[*M1_FEATURES, M1_LABEL]]}
-    return model, results, train[M1_FEATURES].head(5).astype("float64"), data
+    data = {
+        "train": final_train[[*M1_FEATURES, M1_LABEL]],
+        "holdout": hold[[*M1_FEATURES, M1_LABEL]],
+    }
+    extras = {"metrics_by_lead.json": by_lead}
+    return model, results, final_train[M1_FEATURES].head(5).astype("float64"), data, extras
 
 
 def train_m2(cfg: dict) -> tuple:
@@ -108,7 +153,7 @@ def train_m2(cfg: dict) -> tuple:
         "rule_p90_min": rule[1],
     }
     data = {"train": train[[*M2_FEATURES, M2_LABEL]], "holdout": hold[[*M2_FEATURES, M2_LABEL]]}
-    return model, results, train[M2_FEATURES].head(5).astype("float64"), data
+    return model, results, train[M2_FEATURES].head(5).astype("float64"), data, {}
 
 
 def lineage_tags(allow_dirty: bool) -> dict:
@@ -140,7 +185,7 @@ def _params(cfg: dict, family: str) -> dict:
 def run_family(family: str, cfg: dict, tags: dict, args) -> dict:
     name = cfg[family]["registered_model"]
     label = M1_LABEL if family == "m1" else M2_LABEL
-    model, results, example, data = (train_m1 if family == "m1" else train_m2)(cfg)
+    model, results, example, data, extras = (train_m1 if family == "m1" else train_m2)(cfg)
 
     run_tags = {**tags, "model_family": family}
     if args.reproduces:
@@ -161,6 +206,8 @@ def run_family(family: str, cfg: dict, tags: dict, args) -> dict:
         run.log_dataset(data["holdout"], f"{family}_holdout", "evaluation", source, label)
         run.log_metrics(results)
         run.log_dict(cfg, "config/train.yaml")
+        for artifact, obj in extras.items():
+            run.log_dict(obj, artifact)
         version = run.log_sklearn_model(
             model,
             registered_name=None if args.no_register else name,

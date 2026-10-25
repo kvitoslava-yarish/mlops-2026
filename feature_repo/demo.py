@@ -1,8 +1,8 @@
 """Point-in-time correctness with Feast (optional Lab 2 point).
 
-The feature table has one Kyiv state row per issue time (10:00 and 22:00 Kyiv).
-We ask for the state at 15:30, which falls between two rows: Feast must return
-the 10:00 row (the last one known at 15:30), never the 22:00 row from the future.
+The feature table has one Kyiv state row per issue time (04, 10, 16, 22 Kyiv).
+We ask for the state halfway between two rows: Feast must return the earlier row
+(the last one known at that moment), never the later row from the future.
 
     make feast-demo     # after make snapshot
 """

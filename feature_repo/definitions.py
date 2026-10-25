@@ -1,4 +1,4 @@
-"""Feast objects for the issue-time state of Kyiv (the M1 inputs known at 10:00 / 22:00)."""
+"""Feast objects for the issue-time state of Kyiv (the M1 inputs known at each issue time)."""
 
 from datetime import timedelta
 from pathlib import Path
@@ -17,11 +17,11 @@ kyiv_state_source = FileSource(
     timestamp_field="event_timestamp",
 )
 
-# One row per forecast issue time; a row is valid for the 12 hours it covers.
+# One row per forecast issue time (04, 10, 16, 22 Kyiv); valid for the 6 hours it covers.
 kyiv_state = FeatureView(
     name="kyiv_state",
     entities=[city],
-    ttl=timedelta(hours=12),
+    ttl=timedelta(hours=6),
     schema=[
         Field(name="kyiv_under_alert_at_issue", dtype=Int64),
         Field(name="neighbours_under_alert_at_issue", dtype=Int64),
