@@ -1,5 +1,3 @@
-"""Model classes that are logged to MLflow."""
-
 from itertools import product
 
 import numpy as np

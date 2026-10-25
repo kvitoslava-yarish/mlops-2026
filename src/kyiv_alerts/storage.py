@@ -1,5 +1,3 @@
-"""Object store (MinIO, S3 API) access for the lake bucket."""
-
 import hashlib
 from functools import lru_cache
 

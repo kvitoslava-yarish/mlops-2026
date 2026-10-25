@@ -1,5 +1,3 @@
-"""Scores from docs/design.md section 3."""
-
 from datetime import timedelta
 
 import numpy as np
@@ -36,7 +34,6 @@ def f1_tolerant(hours: pd.Series, y: np.ndarray, flagged: np.ndarray) -> dict:
 
 
 def best_threshold(hours: pd.Series, y: np.ndarray, p: np.ndarray) -> float:
-    """Threshold that maximises tolerant F1 (tuned on a window before the hold-out, then frozen)."""
     candidates = np.unique(np.quantile(p, np.linspace(0.5, 0.99, 50)))
     scores = [f1_tolerant(hours, y, p >= t)["f1_pm1h"] for t in candidates]
     return float(candidates[int(np.argmax(scores))])

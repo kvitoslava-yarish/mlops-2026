@@ -1,5 +1,3 @@
-"""Lineage identifiers: the git commit of the code and the DVC hash of the data."""
-
 import subprocess
 from pathlib import Path
 

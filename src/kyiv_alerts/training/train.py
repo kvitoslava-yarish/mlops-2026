@@ -1,14 +1,3 @@
-"""Train M1 (start risk) and M2 (duration) against their baselines on a time split.
-
-Every run logs params, the train / hold-out data sets, metrics for baseline(s) and
-model side by side, and the two lineage tags: ``data_version`` (DVC hash of
-data/features) and ``git_commit``. All writes go through ``tracking.TrackedRun``,
-which also logs ``logging_manifest.json``. A registered model version carries the
-same tags; ``--champion`` moves the alias.
-
-    uv run python -m kyiv_alerts.training.train --model all [--champion]
-"""
-
 import argparse
 import json
 import os
@@ -230,7 +219,7 @@ def run_family(family: str, cfg: dict, tags: dict, args) -> dict:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description="Train M1 and M2 against their baselines")
     ap.add_argument("--model", choices=["m1", "m2", "all"], default="all")
     ap.add_argument("--config", default=str(REPO_ROOT / "configs" / "train.yaml"))
     ap.add_argument("--no-register", action="store_true", help="log the run only")

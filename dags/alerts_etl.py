@@ -1,14 +1,3 @@
-"""alerts_etl: one calendar month of air-raid alerts -> warehouse -> feature tables.
-
-The batch is the run's data interval: CronDataIntervalTimetable("@monthly") gives
-each run [month start, next month start), and the batch is the month of
-data_interval_start. A manual run can name the month instead with the
-``batch_month`` param ("YYYY-MM"). Nothing reads the wall clock.
-
-Rerunning a month is harmless: the raw file in the lake is reused as is, and
-every warehouse write is delete-then-insert of that month inside one transaction.
-"""
-
 from datetime import UTC, datetime
 
 from airflow.sdk import Param, dag, task

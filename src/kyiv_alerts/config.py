@@ -1,9 +1,3 @@
-"""Settings read from the environment.
-
-Defaults point at the local docker compose stack as seen from the host; the
-Airflow containers override them (see docker-compose.yml).
-"""
-
 import os
 from dataclasses import dataclass
 from pathlib import Path

@@ -1,18 +1,11 @@
-# Training configuration; every value is logged as an MLflow param.
 seed: 42
 split:
-  # Time split (design 5.4). Expanding window from 2023-01 (2022: early-war alerting
-  # behaved differently). The official file has no alerts after 2026-08-29 05:00 UTC,
-  # so the hold-out stops at the last complete day: hours after the gap would count as quiet.
   train_start: "2023-01-01"
   train_end: "2026-02-28"        # M2: single split; M1 refits monthly (below)
   holdout_start: "2026-03-01"
   holdout_end: "2026-08-28"
 m1:
   registered_model: kyiv-m1-start-risk
-  # Monthly retraining, evaluated as it would have run: each hold-out month is predicted
-  # by a model fit on all history before that month. The registered model is the latest
-  # refit, on all history up to holdout_end.
   retrain: monthly
   threshold_window_months: 6     # F1 threshold tuned on the 6 months before each fold
   model:

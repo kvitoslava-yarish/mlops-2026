@@ -31,7 +31,6 @@ class TrackedRun:
             "registry": None,
         }
 
-    # --- lifecycle ---------------------------------------------------------
     def __enter__(self) -> "TrackedRun":
         mlflow.set_experiment(self.experiment)
         self.run = mlflow.start_run(run_name=self.run_name)
@@ -80,8 +79,6 @@ class TrackedRun:
         source: str,
         targets: str | None = None,
     ) -> None:
-        """Log a data frame as an MLflow dataset: schema and row count, the file it came from,
-        and the DVC hash of that data as its digest."""
         digest = self._tags["data_version"]
         with warnings.catch_warnings():
             # MLflow registers its local-file source type twice and warns about the tie.
@@ -129,7 +126,6 @@ class TrackedRun:
             "alias": alias,
         }
 
-    # --- reading -----------------------------------------------------------
     def summary(self) -> str:
         m = self.manifest
         model = m["model"]["class"] if m["model"] else "none"

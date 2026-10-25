@@ -1,16 +1,3 @@
-"""Reproduce a registered model version from its two lineage tags.
-
-    uv run python -m kyiv_alerts.training.reproduce --model kyiv-m1-start-risk --alias champion
-
-1. reads ``git_commit`` and ``data_version`` from the model version;
-2. checks out that commit in a temporary git worktree (your working tree is untouched);
-3. checks that the commit's data/features.dvc has hash ``data_version`` and pulls it from
-   the DVC remote;
-4. runs that commit's training (``--no-register``, tagged ``reproduces=<run id>``);
-5. compares the main metric with the registered run, within ``TOLERANCE``.
-Exit code 0 = reproduced, 1 = metric outside tolerance.
-"""
-
 import argparse
 import json
 import os

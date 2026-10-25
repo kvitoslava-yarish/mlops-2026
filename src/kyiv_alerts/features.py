@@ -1,16 +1,3 @@
-"""Features for M1 (hourly start risk) and M2 (alert duration): one code path.
-
-The pipeline calls ``build_m1`` / ``build_m2`` on episodes from ``dwh.alerts``;
-the Lab 4 service will build the same ``AlertHistory`` from PostgreSQL plus the
-poller's live state and call the same functions, so training and serving share
-every formula. Each feature is computed *as of* a time ``t`` (the issue time for
-M1, the alert start for M2) and uses only alerts that started before ``t``;
-an alert still running at ``t`` counts as active, with its minutes clipped at ``t``.
-
-Times are int64 seconds since the epoch (UTC), which keeps the maths independent
-of pandas datetime resolution.
-"""
-
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -23,11 +10,10 @@ from kyiv_alerts.sources.dataset import KYIV, KYIV_OBLAST
 FEATURE_VERSION = "v3"  # v3: 6-h M1 windows from 4 issues/day; M2 oblasts_started_prev_5m
 # (v2: "other oblasts" features count only NEIGHBOURS)
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
-ISSUE_HOURS = (4, 10, 16, 22)  # local issue times; each covers the next 6 hours
+ISSUE_HOURS = (4, 10, 16, 22)
 HORIZON_H = 6
-LOOKBACK_DAYS = 60  # history the pipeline loads before the batch
+LOOKBACK_DAYS = 60
 LONG_ALERT_MIN = 180
-# Oblasts whose alerts feed the neighbour features (Kyiv City itself is separate).
 NEIGHBOURS = frozenset(
     {
         KYIV_OBLAST,
@@ -152,10 +138,6 @@ class AlertHistory:
 
 
 def issue_time(hour_start: int) -> int:
-    """The forecast that covers this hour (Kyiv time): the latest issue at or before it.
-
-    04:00 covers 04-09, 10:00 covers 10-15, 16:00 covers 16-21, 22:00 covers 22-03.
-    """
     local = datetime.fromtimestamp(hour_start, KYIV_TZ)
     earlier = [h for h in ISSUE_HOURS if h <= local.hour]
     if earlier:
