@@ -6,7 +6,7 @@ data/features) and ``git_commit``. All writes go through ``tracking.TrackedRun``
 which also logs ``logging_manifest.json``. A registered model version carries the
 same tags; ``--champion`` moves the alias.
 
-    uv run python -m kyiv_alerts.train --model all [--champion]
+    uv run python -m kyiv_alerts.training.train --model all [--champion]
 """
 
 import argparse
@@ -22,11 +22,11 @@ import yaml
 from mlflow.models import infer_signature
 from sklearn.ensemble import HistGradientBoostingClassifier
 
-from kyiv_alerts import lineage, metrics
 from kyiv_alerts.config import REPO_ROOT
 from kyiv_alerts.features import FEATURE_VERSION, M1_FEATURES, M1_LABEL, M2_FEATURES, M2_LABEL
-from kyiv_alerts.models import QuantilePair
-from kyiv_alerts.tracking import TrackedRun, has_alias
+from kyiv_alerts.training import lineage, metrics
+from kyiv_alerts.training.models import QuantilePair
+from kyiv_alerts.training.tracking import TrackedRun, has_alias
 
 FEATURES_DIR = REPO_ROOT / "data" / "features"
 FEATURES_DVC = REPO_ROOT / "data" / "features.dvc"
@@ -149,8 +149,8 @@ def run_family(family: str, cfg: dict, tags: dict, args) -> dict:
     log_kwargs = {"skops_trusted_types": TRUSTED_TYPES, "pyfunc_predict_fn": "predict_proba"}
     if family == "m2":
         log_kwargs = {
-            "code_paths": [str(Path(__file__).parent)],
-            "skops_trusted_types": [*TRUSTED_TYPES, "kyiv_alerts.models.QuantilePair"],
+            "code_paths": [str(Path(__file__).parents[1])],  # the whole kyiv_alerts package
+            "skops_trusted_types": [*TRUSTED_TYPES, "kyiv_alerts.training.models.QuantilePair"],
         }
     output = model.predict_proba(example) if family == "m1" else model.predict(example)
 

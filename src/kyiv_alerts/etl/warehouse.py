@@ -20,7 +20,7 @@ def connect(dsn: str):
 
 
 def ensure_schema(conn) -> None:
-    sql = resources.files("kyiv_alerts").joinpath("sql/warehouse.sql").read_text()
+    sql = resources.files("kyiv_alerts.etl").joinpath("sql/warehouse.sql").read_text()
     with conn, conn.cursor() as cur:
         cur.execute(sql)
 

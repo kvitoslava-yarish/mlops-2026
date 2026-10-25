@@ -15,11 +15,11 @@ from airflow.sdk import Param, dag, task
 from airflow.sdk.exceptions import AirflowFailException
 from airflow.timetables.interval import CronDataIntervalTimetable
 
-from kyiv_alerts import pipeline
 from kyiv_alerts.batch import resolve_batch
 from kyiv_alerts.config import get_settings
-from kyiv_alerts.quality import QualityGateError
-from kyiv_alerts.validate import ValidationError
+from kyiv_alerts.etl import pipeline
+from kyiv_alerts.etl.quality import QualityGateError
+from kyiv_alerts.etl.validate import ValidationError
 
 
 def _batch(context):

@@ -66,20 +66,20 @@ bad-batch:        ## feed a deliberately broken 2025-06 batch; quality_check mus
 	@echo "expected: quality_check failed. Restore the month with: make run MONTH=$(MONTH)"
 
 row-counts:       ## rows per table for one month: make row-counts MONTH=2025-06
-	uv run python -m kyiv_alerts.warehouse $(MONTH)
+	uv run python -m kyiv_alerts.etl.warehouse $(MONTH)
 
 ## --- training -------------------------------------------------------------------
 snapshot:         ## export passed batches to data/features, version with DVC, push
-	uv run python -m kyiv_alerts.snapshot
+	uv run python -m kyiv_alerts.etl.snapshot
 	uv run dvc add data/features
 	uv run dvc push data/features.dvc
 	@echo "now commit data/features.dvc, then: make train"
 
 train:            ## train M1 + M2 with baselines, log to MLflow, register (CHAMPION=1 moves alias)
-	uv run python -m kyiv_alerts.train --model all $(if $(CHAMPION),--champion)
+	uv run python -m kyiv_alerts.training.train --model all $(if $(CHAMPION),--champion)
 
 reproduce:        ## rerun a registered version from its tags: make reproduce MODEL=... ALIAS=champion
-	uv run python -m kyiv_alerts.reproduce --model $(MODEL) $(if $(VERSION),--version $(VERSION),--alias $(ALIAS))
+	uv run python -m kyiv_alerts.training.reproduce --model $(MODEL) $(if $(VERSION),--version $(VERSION),--alias $(ALIAS))
 
 feast-demo:       ## optional: Feast point-in-time retrieval on the exported M1 features
 	uv run --group feast python feature_repo/demo.py

@@ -1,6 +1,6 @@
 from kyiv_alerts.batch import batch_for
-from kyiv_alerts.clean import clean_batch
-from kyiv_alerts.validate import validate_raw
+from kyiv_alerts.etl.clean import clean_batch
+from kyiv_alerts.etl.validate import validate_raw
 
 B = batch_for("2025-06")
 

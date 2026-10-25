@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from kyiv_alerts import warehouse
 from kyiv_alerts.config import REPO_ROOT, get_settings
+from kyiv_alerts.etl import warehouse
 
 OUT_DIR = REPO_ROOT / "data" / "features"
 TABLES = {"m1_hourly": "hour_start", "m2_alert": "alert_start"}

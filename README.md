@@ -127,7 +127,7 @@ e705cfc6d7054b8b09999be31c7c423c    31025633  data/raw/official_data_en.csv
 
 ## 2. ETL pipeline: `alerts_etl`
 
-[dags/alerts_etl.py](dags/alerts_etl.py) (thin) calls [src/kyiv_alerts/pipeline.py](src/kyiv_alerts/pipeline.py):
+[dags/alerts_etl.py](dags/alerts_etl.py) (thin) calls [src/kyiv_alerts/etl/pipeline.py](src/kyiv_alerts/etl/pipeline.py):
 
 | Task | Does | Writes |
 |---|---|---|
@@ -164,7 +164,7 @@ $ make row-counts MONTH=2025-06
 
 ### Idempotency: the same interval run twice
 
-The statement that makes a rerun harmless ([warehouse.py](src/kyiv_alerts/warehouse.py), `replace_batch`), executed for `dwh.alerts`, `features.m1_hourly` and `features.m2_alert` inside one transaction:
+The statement that makes a rerun harmless ([warehouse.py](src/kyiv_alerts/etl/warehouse.py), `replace_batch`), executed for `dwh.alerts`, `features.m1_hourly` and `features.m2_alert` inside one transaction:
 
 ```sql
 DELETE FROM dwh.alerts WHERE batch_month = %s;
@@ -204,7 +204,7 @@ Unpausing the DAG also makes Airflow schedule the latest complete interval (2026
 
 ## 3. Quality gate
 
-[src/kyiv_alerts/quality.py](src/kyiv_alerts/quality.py). Thresholds were set from the 2022-03 … 2026-07 official batches, where invalid records were ≤ 0.02%, batch size stayed within 0.61–1.40× of the trailing median and the newest alert was ≤ 4.3 h before month end.
+[src/kyiv_alerts/etl/quality.py](src/kyiv_alerts/etl/quality.py). Thresholds were set from the 2022-03 … 2026-07 official batches, where invalid records were ≤ 0.02%, batch size stayed within 0.61–1.40× of the trailing median and the newest alert was ≤ 4.3 h before month end.
 
 | Check | Limit |
 |---|---|
@@ -249,7 +249,7 @@ quality_check log:
 
 | Batch | Failed check | Why | Decision |
 |---|---|---|---|
-| 2026-08 | `hours_since_newest_alert` = 67.1 (limit 48) | the official file has no alerts after 2026-08-29 05:00 UTC, while the volunteer file has ~170 a day: an upstream gap, the "stale extract" case | accepted: `ACCEPTED_GAPS` in [quality.py](src/kyiv_alerts/quality.py) sets 72 h for this month only and the gate report records the reason; the hold-out stops on 2026-08-28 so the missing hours are not scored as quiet |
+| 2026-08 | `hours_since_newest_alert` = 67.1 (limit 48) | the official file has no alerts after 2026-08-29 05:00 UTC, while the volunteer file has ~170 a day: an upstream gap, the "stale extract" case | accepted: `ACCEPTED_GAPS` in [quality.py](src/kyiv_alerts/etl/quality.py) sets 72 h for this month only and the gate report records the reason; the hold-out stops on 2026-08-28 so the missing hours are not scored as quiet |
 | 2026-09 | `rows_vs_3m_median` = 2.20 (limit 1 ± 0.5) | the only source was the volunteer file, which splits alerts into ~2× more oblast episodes: a source switch | rejected: the volunteer file was removed as a pipeline source and the batch deleted; 2026-09 and 2026-10 come from alerts.in.ua once the token arrives |
 
 Note the bad batch passed the size check (0.996), because merged episodes hide dropped records. That is why the gate checks the invalid share separately.
@@ -298,7 +298,7 @@ The model beats the rule on every metric: P90 pinball is 30% lower, P90 shrinks 
 
 MLflow 3.16.1 at http://localhost:5001: backend store PostgreSQL (database `mlflow`), artifact store MinIO (bucket `mlflow`, served through the tracking server). Started by `make up`.
 
-Every write to MLflow goes through one class, [`TrackedRun`](src/kyiv_alerts/tracking.py). It refuses to start a run without `data_version` and `git_commit`, records every param, metric, tag, dataset, artifact and model it writes, marks a crashed run `FAILED`, and ends each run by logging that record as **`logging_manifest.json`** and printing a one-line summary:
+Every write to MLflow goes through one class, [`TrackedRun`](src/kyiv_alerts/training/tracking.py). It refuses to start a run without `data_version` and `git_commit`, records every param, metric, tag, dataset, artifact and model it writes, marks a crashed run `FAILED`, and ends each run by logging that record as **`logging_manifest.json`** and printing a one-line summary:
 
 ```
 [mlflow] kyiv-m1-start-risk / m1-84a7cf5 (a5876500…) FINISHED: 6 tags · 13 params · 24 metrics · 2 datasets · 2 artifacts · model HistGradientBoostingClassifier · kyiv-m1-start-risk v3 @champion
@@ -321,7 +321,7 @@ make reproduce MODEL=kyiv-m1-start-risk ALIAS=champion   # or VERSION=3
 make reproduce MODEL=kyiv-m2-duration ALIAS=champion
 ```
 
-[src/kyiv_alerts/reproduce.py](src/kyiv_alerts/reproduce.py) reads `git_commit` and `data_version` from the model version, checks out that commit in a temporary `git worktree` (your working tree is untouched), verifies that its `data/features.dvc` has hash `data_version`, `dvc pull`s it from MinIO, runs that commit's training without registering (tagged `reproduces=<run id>`), and compares the main metric.
+[src/kyiv_alerts/training/reproduce.py](src/kyiv_alerts/training/reproduce.py) reads `git_commit` and `data_version` from the model version, checks out that commit in a temporary `git worktree` (your working tree is untouched), verifies that its `data/features.dvc` has hash `data_version`, `dvc pull`s it from MinIO, runs that commit's training without registering (tagged `reproduces=<run id>`), and compares the main metric.
 
 **On another machine** the snapshot is not in that machine's MinIO yet: run `make data-seed`, `make backfill` and `make snapshot` first. The export is deterministic (sorted rows, same lock file), so it reproduces the same `data/features.dvc` hash and pushes the data the registered version needs.
 
@@ -333,7 +333,7 @@ kyiv-m1-start-risk v3: run a5876500d37b4f78a6223163f9117ce1, commit 84a7cf543130
 $ git worktree add --detach /var/folders/.../kyiv-repro-…/repo 84a7cf5431304916bbcfcd48b11c7e4cd0ef70b2
 $ dvc pull data/features.dvc
 3 files fetched and 2 files added
-$ uv run --frozen python -m kyiv_alerts.train --model m1 --no-register --reproduces a5876500d37b4f78a6223163f9117ce1 ...
+$ uv run --frozen python -m kyiv_alerts.training.train --model m1 --no-register --reproduces a5876500d37b4f78a6223163f9117ce1 ...
 [mlflow] kyiv-m1-start-risk / m1-84a7cf5 (ac3cdd78…) FINISHED: 7 tags · 13 params · 24 metrics · 2 datasets · 2 artifacts · model HistGradientBoostingClassifier · not registered
 $ git worktree remove --force /var/folders/.../kyiv-repro-…/repo
 holdout_brier_model: registered 0.067009, reproduced 0.067009, |diff| 0.00e+00 (tolerance 0.0001) -> PASS
@@ -349,17 +349,21 @@ reproduction run: 8bdf1893bf014f428a6b67a07f7ce6a3
 ## Repository
 
 ```
-dags/alerts_etl.py            Airflow DAG (thin wrapper)
-src/kyiv_alerts/              pipeline, sources, cleaning, features, gate, training (tracking.py: MLflow writes), reproduction
-  sql/warehouse.sql           warehouse schema (dwh, features)
-configs/train.yaml            split dates and hyperparameters
-feature_repo/                 Feast offline demo (optional)
-scripts/                      seeding, bad batch, Airflow run / backfill helpers
-docker/                       Airflow and MLflow images, Postgres init
-docker-compose.yml            local stack
-data/raw.dvc, data/features.dvc   data versions (contents live in the DVC remote)
-docs/design.md                design document
-tests/                        unit tests (no Docker needed): make test
+dags/alerts_etl.py                 Airflow DAG (thin wrapper over kyiv_alerts.etl.pipeline)
+src/kyiv_alerts/
+  config.py, batch.py, storage.py  shared basics: settings, the monthly batch, MinIO access
+  sources/                         upstream alert sources (pinned dataset, alerts.in.ua)
+  features.py                      feature formulas, shared by ETL, training and (Lab 4) serving
+  etl/                             the DAG steps: pipeline, validate, clean, warehouse, quality,
+                                   snapshot; sql/warehouse.sql
+  training/                        train, models, metrics, tracking (TrackedRun), lineage, reproduce
+configs/train.yaml                 split dates and hyperparameters
+feature_repo/                      Feast offline demo (optional)
+scripts/                           seeding, bad batch, Airflow run / backfill helpers
+docker/, docker-compose.yml        local stack (Airflow, MLflow images, Postgres init)
+data/raw.dvc, data/features.dvc    data versions (contents live in the DVC remote)
+docs/design.md                     design document
+tests/                             unit tests (no Docker needed): make test
 ```
 
 ## Maturity scorecard

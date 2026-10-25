@@ -265,7 +265,7 @@ flowchart LR
 
 #### Data flow (Lab 2, real component names)
 
-The batch side as it runs now. Marks: **version points** (DVC: raw files, training snapshot), **quality gate** (`quality_check`, before training can read a batch), **training path** (snapshot → `kyiv_alerts.train`) vs **serving path** (feature code on live state, Lab 4).
+The batch side as it runs now. Marks: **version points** (DVC: raw files, training snapshot), **quality gate** (`quality_check`, before training can read a batch), **training path** (snapshot → `kyiv_alerts.training.train`) vs **serving path** (feature code on live state, Lab 4).
 
 ```mermaid
 flowchart TB
@@ -285,7 +285,7 @@ flowchart TB
         feat["features.m1_hourly · features.m2_alert<br/>feature_version = v2"]
     end
     snap[("version point: data/features.dvc<br/>passed batches only")]
-    train["make train → kyiv_alerts.train<br/>rule baselines + HistGradientBoosting"]
+    train["make train → kyiv_alerts.training.train<br/>rule baselines + HistGradientBoosting"]
     mlf["MLflow 3.16.1 tracking server<br/>backend: PostgreSQL db mlflow · artifacts: MinIO bucket mlflow"]
     reg["Model registry<br/>kyiv-m1-start-risk · kyiv-m2-duration<br/>tags data_version + git_commit · alias champion"]
     feast["Feast 0.66 offline demo<br/>feature_repo/ (point-in-time join)"]
@@ -312,7 +312,7 @@ flowchart TB
 ```
 
 - Rerunning a month is harmless: `extract` reuses the immutable raw file, and `load` / `build_features` delete and re-insert that month inside one transaction.
-- Quality gate (`src/kyiv_alerts/quality.py`): invalid records ≤ 1% after de-duplication; batch size within ±50% of the median of the last 3 passed batches; no duplicate (oblast, start); newest alert ≤ 48 h before month end; Kyiv present; previous month loaded (feature lookback); M1 rows = hours in the month; M2 rows = Kyiv alerts; no feature nulls; one `feature_version`. A failure marks the batch in `dwh.batch_audit`, fails the run, and keeps the batch out of the training snapshot.
+- Quality gate (`src/kyiv_alerts/etl/quality.py`): invalid records ≤ 1% after de-duplication; batch size within ±50% of the median of the last 3 passed batches; no duplicate (oblast, start); newest alert ≤ 48 h before month end; Kyiv present; previous month loaded (feature lookback); M1 rows = hours in the month; M2 rows = Kyiv alerts; no feature nulls; one `feature_version`. A failure marks the batch in `dwh.batch_audit`, fails the run, and keeps the batch out of the training snapshot.
 - Feature store = PostgreSQL feature tables (offline + the online lookups Lab 4 needs) with a DVC-versioned Parquet snapshot for training. Feast runs as an offline demo only (7.1).
 - Lab 3 adds the Telegram ingestion; Lab 4 adds the poller, the forecast DAG and the API that read the same feature code.
 

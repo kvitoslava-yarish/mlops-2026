@@ -7,8 +7,8 @@ trailing 3-month median, and the newest alert was at most 4.3 h before month end
 
 from dataclasses import asdict, dataclass
 
-from kyiv_alerts import warehouse
 from kyiv_alerts.batch import Batch
+from kyiv_alerts.etl import warehouse
 from kyiv_alerts.features import FEATURE_VERSION, M1_FEATURES, M2_FEATURES
 from kyiv_alerts.sources.dataset import KYIV
 

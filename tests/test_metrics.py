@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from kyiv_alerts.metrics import f1_tolerant, pinball
+from kyiv_alerts.training.metrics import f1_tolerant, pinball
 
 
 def test_flag_at_midnight_catches_start_at_2358():

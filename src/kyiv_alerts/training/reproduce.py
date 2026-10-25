@@ -1,6 +1,6 @@
 """Reproduce a registered model version from its two lineage tags.
 
-    uv run python -m kyiv_alerts.reproduce --model kyiv-m1-start-risk --alias champion
+    uv run python -m kyiv_alerts.training.reproduce --model kyiv-m1-start-risk --alias champion
 
 1. reads ``git_commit`` and ``data_version`` from the model version;
 2. checks out that commit in a temporary git worktree (your working tree is untouched);
@@ -24,12 +24,19 @@ import mlflow
 from mlflow.tracking import MlflowClient
 
 from kyiv_alerts.config import REPO_ROOT
-from kyiv_alerts.lineage import dvc_md5
-from kyiv_alerts.train import MAIN_METRIC
+from kyiv_alerts.training.lineage import dvc_md5
+from kyiv_alerts.training.train import MAIN_METRIC
 
 # Same machine and lock file give identical numbers; the tolerance absorbs float
 # differences across CPUs / BLAS builds (README, "Reproduce a registered run").
 TOLERANCE = {"m1": 1e-4, "m2": 0.1}
+
+
+def train_module(tree: Path) -> str:
+    """The training entry point at that commit (it moved into kyiv_alerts.training)."""
+    if (tree / "src" / "kyiv_alerts" / "training" / "train.py").exists():
+        return "kyiv_alerts.training.train"
+    return "kyiv_alerts.train"
 
 
 def _run(cmd: list[str], cwd: Path) -> None:
@@ -74,7 +81,7 @@ def main() -> int:
         _run(["dvc", "pull", "data/features.dvc"], cwd=tree)
         result = workdir / "result.json"
         _run(
-            ["uv", "run", "--frozen", "python", "-m", "kyiv_alerts.train", "--model", family,
+            ["uv", "run", "--frozen", "python", "-m", train_module(tree), "--model", family,
              "--no-register", "--reproduces", mv.run_id, "--result-file", str(result)],
             cwd=tree,
         )  # fmt: skip

@@ -8,7 +8,7 @@ import pytest
 from mlflow.tracking import MlflowClient
 from sklearn.linear_model import LogisticRegression
 
-from kyiv_alerts.tracking import MANIFEST_FILE, TrackedRun, has_alias
+from kyiv_alerts.training.tracking import MANIFEST_FILE, TrackedRun, has_alias
 
 TAGS = {"data_version": "abc.dir", "git_commit": "deadbeef", "feature_version": "v2"}
 

@@ -1,7 +1,7 @@
 import pytest
 
 from kyiv_alerts.batch import batch_for
-from kyiv_alerts.validate import ValidationError, validate_raw
+from kyiv_alerts.etl.validate import ValidationError, validate_raw
 
 B = batch_for("2025-06")
 

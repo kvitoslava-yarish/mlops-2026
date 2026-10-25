@@ -1,8 +1,11 @@
 """Kyiv air-alert forecasting system.
 
-Lab 2: monthly alert ETL (``kyiv_alerts.pipeline``), the shared feature code
-(``kyiv_alerts.features``), training with MLflow lineage (``kyiv_alerts.train``)
-and one-command reproduction (``kyiv_alerts.reproduce``).
+Layout:
+    config, batch, storage   shared basics (settings, the monthly batch, MinIO access)
+    sources/                 upstream alert sources
+    features                 feature formulas shared by ETL, training and serving
+    etl/                     the steps of the Airflow DAG alerts_etl
+    training/                baselines, models, MLflow tracking, reproduction
 """
 
 __version__ = "0.2.0"

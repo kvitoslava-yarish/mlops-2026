@@ -1,19 +1,3 @@
-"""TrackedRun: the one place where a training run writes to MLflow.
-
-Every write goes through a method of this class and is recorded in a manifest.
-When the run ends, the manifest is logged as ``logging_manifest.json`` and a
-one-line summary is printed, so what a run logged can be read in one file
-instead of clicking through the UI. A run without the lineage tags is refused
-before anything is written.
-
-    with TrackedRun("kyiv-m1-start-risk", "m1-dc85811", tags) as run:
-        run.log_params({...})
-        run.log_dataset(train_df, "m1_train", "training", "data/features/m1_hourly.parquet")
-        run.log_metrics({...})
-        version = run.log_sklearn_model(model, registered_name="kyiv-m1-start-risk")
-        run.register("kyiv-m1-start-risk", version, version_tags={...}, alias="champion")
-"""
-
 import json
 import warnings
 
