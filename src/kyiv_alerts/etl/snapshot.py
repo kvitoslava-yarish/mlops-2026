@@ -1,9 +1,3 @@
-"""Export the feature tables to data/features/ for training (then ``dvc add`` it).
-
-Only batches whose quality gate passed are exported; rows are sorted so the
-same warehouse state always gives byte-identical Parquet files.
-"""
-
 from pathlib import Path
 
 import pandas as pd

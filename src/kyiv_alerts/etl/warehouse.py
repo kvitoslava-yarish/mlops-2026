@@ -1,5 +1,3 @@
-"""load: PostgreSQL warehouse access. Every write replaces exactly one batch."""
-
 import json
 from datetime import datetime
 from importlib import resources

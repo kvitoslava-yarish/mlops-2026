@@ -7,15 +7,6 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 
 
 class QuantilePair(BaseEstimator, RegressorMixin):
-    """M2: one quantile GBM per quantile; ``predict`` returns columns [P50, P90], P90 >= P50.
-
-    ``params["monotonic_cst"]`` ({feature: +1 / -1}) is passed to the trees, but scikit-learn
-    re-estimates quantile leaf values after each tree is grown, which can break the constraint.
-    ``predict`` therefore projects the output onto monotone functions: the mean of the upper
-    envelope (max over points that the constraints say must be lower or equal) and the lower
-    envelope (min over points that must be higher or equal), over the integer grid of the
-    constrained features seen in training. Both envelopes are monotone, so the mean is too.
-    """
 
     def __init__(self, quantiles=(0.5, 0.9), params=None, random_state=42):
         self.quantiles = quantiles

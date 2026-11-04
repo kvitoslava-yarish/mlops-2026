@@ -1,18 +1,3 @@
-"""transform: raw records -> one row per oblast alert episode.
-
-Rules, in order, each counted in the batch audit:
-1. exact duplicate rows are dropped (38% of the official file);
-2. unfinished records (no end yet) are dropped;
-3. records whose end is not after their start are dropped;
-4. raion / hromada records are merged into oblast episodes: overlapping or
-   touching intervals of the same oblast become one episode (an oblast is
-   "under alert" while any part of it is).
-Guessed ends (volunteer ``naive=True``, alerts.in.ua ``calculated``) are kept for
-the start time but flagged, so duration labels can exclude them. An episode's
-``alert_level`` is the highest level of its records (red > yellow > "" before the
-two-level system).
-"""
-
 import numpy as np
 import pandas as pd
 
