@@ -625,7 +625,7 @@
    "id": "src_tg",
    "type": "rectangle",
    "x": 40,
-   "y": 700,
+   "y": 725,
    "width": 400,
    "height": 90,
    "angle": 0,
@@ -663,7 +663,7 @@
    "id": "src_tg_t",
    "type": "text",
    "x": 90.39999999999998,
-   "y": 725.0,
+   "y": 750.0,
    "width": 299.20000000000005,
    "height": 40.0,
    "angle": 0,
@@ -701,7 +701,7 @@
    "x": 540,
    "y": 170,
    "width": 420,
-   "height": 180,
+   "height": 200,
    "angle": 0,
    "strokeColor": "#2b8a3e",
    "backgroundColor": "#b2f2bb",
@@ -747,7 +747,7 @@
    "x": 582.8,
    "y": 200.0,
    "width": 334.40000000000003,
-   "height": 120.0,
+   "height": 140.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -767,8 +767,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "Airflow DAG alerts_etl\nSCHEDULE: 1st of month, 03:00 UTC\nafter the 00:30 fetch (+ make run)\nextract → validate → transform →\nload → build_features → quality_check\nbatch = previous month (data interval)",
-   "originalText": "Airflow DAG alerts_etl\nSCHEDULE: 1st of month, 03:00 UTC\nafter the 00:30 fetch (+ make run)\nextract → validate → transform →\nload → build_features → quality_check\nbatch = previous month (data interval)",
+   "text": "Airflow DAG alerts_etl\nSCHEDULE: 1st of month, 03:00 UTC\nafter the 00:30 fetch (+ make run)\nextract → validate → transform →\nload → build_features → quality_check\nbatch = previous month (data interval)\ncode: dags/alerts_etl.py → etl/",
+   "originalText": "Airflow DAG alerts_etl\nSCHEDULE: 1st of month, 03:00 UTC\nafter the 00:30 fetch (+ make run)\nextract → validate → transform →\nload → build_features → quality_check\nbatch = previous month (data interval)\ncode: dags/alerts_etl.py → etl/",
    "fontSize": 16,
    "fontFamily": 2,
    "textAlign": "center",
@@ -781,9 +781,9 @@
    "id": "job_apifetch",
    "type": "rectangle",
    "x": 540,
-   "y": 370,
+   "y": 390,
    "width": 420,
-   "height": 120,
+   "height": 135,
    "angle": 0,
    "strokeColor": "#2b8a3e",
    "backgroundColor": "#b2f2bb",
@@ -823,9 +823,9 @@
    "id": "job_apifetch_t",
    "type": "text",
    "x": 587.2,
-   "y": 390.0,
+   "y": 407.5,
    "width": 325.6,
-   "height": 80.0,
+   "height": 100.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -845,8 +845,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "Airflow DAG fetch_alerts_in_ua\nSCHEDULE: 1st + 15th, 00:30 UTC\nfetch 25 oblasts → check all saved\n→ lake raw/alerts_in_ua/<fetch time>/",
-   "originalText": "Airflow DAG fetch_alerts_in_ua\nSCHEDULE: 1st + 15th, 00:30 UTC\nfetch 25 oblasts → check all saved\n→ lake raw/alerts_in_ua/<fetch time>/",
+   "text": "Airflow DAG fetch_alerts_in_ua\nSCHEDULE: 1st + 15th, 00:30 UTC\nfetch 25 oblasts → check all saved\n→ lake raw/alerts_in_ua/<fetch time>/\ncode: dags/fetch_alerts_in_ua.py",
+   "originalText": "Airflow DAG fetch_alerts_in_ua\nSCHEDULE: 1st + 15th, 00:30 UTC\nfetch 25 oblasts → check all saved\n→ lake raw/alerts_in_ua/<fetch time>/\ncode: dags/fetch_alerts_in_ua.py",
    "fontSize": 16,
    "fontFamily": 2,
    "textAlign": "center",
@@ -859,7 +859,7 @@
    "id": "job_poller",
    "type": "rectangle",
    "x": 540,
-   "y": 520,
+   "y": 550,
    "width": 420,
    "height": 150,
    "angle": 0,
@@ -909,7 +909,7 @@
    "id": "job_poller_t",
    "type": "text",
    "x": 582.8,
-   "y": 545.0,
+   "y": 575.0,
    "width": 334.40000000000003,
    "height": 100.0,
    "angle": 0,
@@ -945,7 +945,7 @@
    "id": "job_tg",
    "type": "rectangle",
    "x": 540,
-   "y": 700,
+   "y": 725,
    "width": 420,
    "height": 90,
    "angle": 0,
@@ -987,7 +987,7 @@
    "id": "job_tg_t",
    "type": "text",
    "x": 574.0,
-   "y": 725.0,
+   "y": 750.0,
    "width": 352.0,
    "height": 40.0,
    "angle": 0,
@@ -1025,7 +1025,7 @@
    "x": 1060,
    "y": 40,
    "width": 440,
-   "height": 120,
+   "height": 140,
    "angle": 0,
    "strokeColor": "#2b8a3e",
    "backgroundColor": "#b2f2bb",
@@ -1067,7 +1067,7 @@
    "x": 1086.4,
    "y": 70.0,
    "width": 387.20000000000005,
-   "height": 60.0,
+   "height": 80.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -1087,8 +1087,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "DVC remote = MinIO bucket dvc\ndata/raw (CSVs) · data/api (first API fetch)\ndata/features (training snapshot)",
-   "originalText": "DVC remote = MinIO bucket dvc\ndata/raw (CSVs) · data/api (first API fetch)\ndata/features (training snapshot)",
+   "text": "DVC remote = MinIO bucket dvc\ndata/raw (CSVs) · data/api (first API fetch)\ndata/features (training snapshot)\npointers in git: data/*.dvc",
+   "originalText": "DVC remote = MinIO bucket dvc\ndata/raw (CSVs) · data/api (first API fetch)\ndata/features (training snapshot)\npointers in git: data/*.dvc",
    "fontSize": 16,
    "fontFamily": 2,
    "textAlign": "center",
@@ -1181,7 +1181,7 @@
    "x": 1060,
    "y": 320,
    "width": 440,
-   "height": 230,
+   "height": 250,
    "angle": 0,
    "strokeColor": "#2b8a3e",
    "backgroundColor": "#b2f2bb",
@@ -1235,7 +1235,7 @@
    "x": 1090.8,
    "y": 365.0,
    "width": 378.40000000000003,
-   "height": 140.0,
+   "height": 160.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -1255,8 +1255,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "PostgreSQL 16 — warehouse\ndwh.alerts (episodes + alert_level)\ndwh.batch_audit (gate, regime)\nfeatures.m1_hourly · features.m2_alert (v3)\nlive.alerts — planned (poller)\nforecasts.m1 — planned (forecast_6h)\n+ databases airflow, mlflow",
-   "originalText": "PostgreSQL 16 — warehouse\ndwh.alerts (episodes + alert_level)\ndwh.batch_audit (gate, regime)\nfeatures.m1_hourly · features.m2_alert (v3)\nlive.alerts — planned (poller)\nforecasts.m1 — planned (forecast_6h)\n+ databases airflow, mlflow",
+   "text": "PostgreSQL 16 — warehouse\ndwh.alerts (episodes + alert_level)\ndwh.batch_audit (gate, regime)\nfeatures.m1_hourly · features.m2_alert (v3)\nlive.alerts — planned (poller)\nforecasts.m1 — planned (forecast_6h)\n+ databases airflow, mlflow\nschema: etl/sql/warehouse.sql",
+   "originalText": "PostgreSQL 16 — warehouse\ndwh.alerts (episodes + alert_level)\ndwh.batch_audit (gate, regime)\nfeatures.m1_hourly · features.m2_alert (v3)\nlive.alerts — planned (poller)\nforecasts.m1 — planned (forecast_6h)\n+ databases airflow, mlflow\nschema: etl/sql/warehouse.sql",
    "fontSize": 16,
    "fontFamily": 2,
    "textAlign": "center",
@@ -1271,7 +1271,7 @@
    "x": 1600,
    "y": 40,
    "width": 460,
-   "height": 170,
+   "height": 190,
    "angle": 0,
    "strokeColor": "#2b8a3e",
    "backgroundColor": "#b2f2bb",
@@ -1313,7 +1313,7 @@
    "x": 1605.6,
    "y": 75.0,
    "width": 448.8,
-   "height": 100.0,
+   "height": 120.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -1333,8 +1333,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "make train (host) — MONTHLY\nafter the month's alerts_etl passes\n→ make snapshot (DVC) → train → register\nM1: expanding window, refit monthly\nM2: time split · lineage: data_version + git_commit",
-   "originalText": "make train (host) — MONTHLY\nafter the month's alerts_etl passes\n→ make snapshot (DVC) → train → register\nM1: expanding window, refit monthly\nM2: time split · lineage: data_version + git_commit",
+   "text": "make train (host) — MONTHLY\nafter the month's alerts_etl passes\n→ make snapshot (DVC) → train → register\nM1: expanding window, refit monthly\nM2: time split · lineage: data_version + git_commit\ncode: training/train.py · tracking.py",
+   "originalText": "make train (host) — MONTHLY\nafter the month's alerts_etl passes\n→ make snapshot (DVC) → train → register\nM1: expanding window, refit monthly\nM2: time split · lineage: data_version + git_commit\ncode: training/train.py · tracking.py",
    "fontSize": 16,
    "fontFamily": 2,
    "textAlign": "center",
@@ -1349,7 +1349,7 @@
    "x": 1600,
    "y": 250,
    "width": 460,
-   "height": 90,
+   "height": 110,
    "angle": 0,
    "strokeColor": "#2b8a3e",
    "backgroundColor": "#b2f2bb",
@@ -1388,10 +1388,10 @@
   {
    "id": "tr_mlflow_t",
    "type": "text",
-   "x": 1645.2,
+   "x": 1632.0,
    "y": 275.0,
-   "width": 369.6,
-   "height": 40.0,
+   "width": 396.00000000000006,
+   "height": 60.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -1411,8 +1411,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "MLflow 3.16 tracking + model registry\nPostgres backend · MinIO artifacts · :5001",
-   "originalText": "MLflow 3.16 tracking + model registry\nPostgres backend · MinIO artifacts · :5001",
+   "text": "MLflow 3.16 tracking + model registry\nPostgres backend · MinIO artifacts · :5001\nper-lead step metrics · logging_manifest.json",
+   "originalText": "MLflow 3.16 tracking + model registry\nPostgres backend · MinIO artifacts · :5001\nper-lead step metrics · logging_manifest.json",
    "fontSize": 16,
    "fontFamily": 2,
    "textAlign": "center",
@@ -1427,7 +1427,7 @@
    "x": 1600,
    "y": 380,
    "width": 460,
-   "height": 170,
+   "height": 190,
    "angle": 0,
    "strokeColor": "#6741d9",
    "backgroundColor": "#e5dbff",
@@ -1471,9 +1471,9 @@
    "id": "models_t",
    "type": "text",
    "x": 1619.625,
-   "y": 408.75,
+   "y": 409.375,
    "width": 420.75000000000006,
-   "height": 112.5,
+   "height": 131.25,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -1493,8 +1493,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "MODELS (loaded by alias @champion)\nM1 kyiv-m1-start-risk v5 — P(start) per hour, 6 h\nM2 kyiv-m2-duration v5 — P50 / P90 minutes\nM3 threat type — Lab 3\n(label = alert_level: yellow drones / red missiles)\nfallback: hour-of-day baseline, degraded=true",
-   "originalText": "MODELS (loaded by alias @champion)\nM1 kyiv-m1-start-risk v5 — P(start) per hour, 6 h\nM2 kyiv-m2-duration v5 — P50 / P90 minutes\nM3 threat type — Lab 3\n(label = alert_level: yellow drones / red missiles)\nfallback: hour-of-day baseline, degraded=true",
+   "text": "MODELS — alias @champion · commit 52cc28c\nM1 kyiv-m1-start-risk v6 — P(start) per hour, 6 h\nM2 kyiv-m2-duration v7 — P50 / P90, monotonic\nM3 threat type — Lab 3\n(label = alert_level: yellow drones / red missiles)\nfallback: hour-of-day baseline, degraded=true\ncode: training/models.py · features.py",
+   "originalText": "MODELS — alias @champion · commit 52cc28c\nM1 kyiv-m1-start-risk v6 — P(start) per hour, 6 h\nM2 kyiv-m2-duration v7 — P50 / P90, monotonic\nM3 threat type — Lab 3\n(label = alert_level: yellow drones / red missiles)\nfallback: hour-of-day baseline, degraded=true\ncode: training/models.py · features.py",
    "fontSize": 15,
    "fontFamily": 2,
    "textAlign": "center",
@@ -1977,7 +1977,7 @@
    "x": 1060,
    "y": 880,
    "width": 440,
-   "height": 200,
+   "height": 250,
    "angle": 0,
    "strokeColor": "#2b8a3e",
    "backgroundColor": "#b2f2bb",
@@ -2009,9 +2009,9 @@
    "id": "legend_t",
    "type": "text",
    "x": 1073.75,
-   "y": 933.125,
+   "y": 930.0,
    "width": 412.50000000000006,
-   "height": 93.75,
+   "height": 150.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -2031,8 +2031,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "STATUS TODAY\nbuilt: alerts_etl, fetch_alerts_in_ua, DVC, MinIO,\nPostgres, MLflow, training, M1 + M2 champions\nplanned: poller, forecast_6h, API,\nmonitoring (Lab 4), Telegram + M3 (Lab 3)",
-   "originalText": "STATUS TODAY\nbuilt: alerts_etl, fetch_alerts_in_ua, DVC, MinIO,\nPostgres, MLflow, training, M1 + M2 champions\nplanned: poller, forecast_6h, API,\nmonitoring (Lab 4), Telegram + M3 (Lab 3)",
+   "text": "STATUS TODAY\nbuilt: alerts_etl, fetch_alerts_in_ua, DVC, MinIO,\nPostgres, MLflow, training,\nchampions M1 v6 + M2 v7 (features v3)\ndata: 2022-03 … 2026-08 (official file)\n+ 2026-10 (API, two-level red / yellow regime)\nplanned: poller, forecast_6h, API,\nmonitoring (Lab 4), Telegram + M3 (Lab 3)",
+   "originalText": "STATUS TODAY\nbuilt: alerts_etl, fetch_alerts_in_ua, DVC, MinIO,\nPostgres, MLflow, training,\nchampions M1 v6 + M2 v7 (features v3)\ndata: 2022-03 … 2026-08 (official file)\n+ 2026-10 (API, two-level red / yellow regime)\nplanned: poller, forecast_6h, API,\nmonitoring (Lab 4), Telegram + M3 (Lab 3)",
    "fontSize": 15,
    "fontFamily": 2,
    "textAlign": "center",
@@ -2045,9 +2045,9 @@
    "id": "ar_src_official_st_dvc",
    "type": "arrow",
    "x": 440.0,
-   "y": 100.0,
+   "y": 101.92307692307692,
    "width": 620.0,
-   "height": 0.0,
+   "height": 5.961538461538467,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -2081,7 +2081,7 @@
     ],
     [
      620.0,
-     0.0
+     5.961538461538467
     ]
    ],
    "lastCommittedPoint": null,
@@ -2103,7 +2103,7 @@
    "id": "ar_src_official_st_dvc_t",
    "type": "text",
    "x": 692.8,
-   "y": 91.875,
+   "y": 96.77884615384616,
    "width": 114.4,
    "height": 16.25,
    "angle": 0,
@@ -2139,9 +2139,9 @@
    "id": "ar_src_monthago_job_apifetch",
    "type": "arrow",
    "x": 440.0,
-   "y": 390.4901960784314,
+   "y": 401.27450980392155,
    "width": 100.0,
-   "height": 12.74509803921569,
+   "height": 18.13725490196083,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -2175,7 +2175,7 @@
     ],
     [
      100.0,
-     12.74509803921569
+     18.13725490196083
     ]
    ],
    "lastCommittedPoint": null,
@@ -2197,7 +2197,7 @@
    "id": "ar_src_monthago_job_apifetch_t",
    "type": "text",
    "x": 454.25,
-   "y": 388.7377450980392,
+   "y": 402.218137254902,
    "width": 71.5,
    "height": 16.25,
    "angle": 0,
@@ -2233,9 +2233,9 @@
    "id": "ar_job_apifetch_st_lake",
    "type": "arrow",
    "x": 960.0,
-   "y": 430.0,
+   "y": 451.4423076923077,
    "width": 100.0,
-   "height": 176.85185185185185,
+   "height": 198.29415954415953,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -2262,15 +2262,15 @@
     ],
     [
      50.0,
-     0.0
+     -1.4423076923076792
     ],
     [
      50.0,
-     -175.0
+     -196.44230769230768
     ],
     [
      100.0,
-     -176.85185185185185
+     -198.29415954415953
     ]
    ],
    "lastCommittedPoint": null,
@@ -2292,7 +2292,7 @@
    "id": "ar_job_apifetch_st_lake_t",
    "type": "text",
    "x": 927.775,
-   "y": 334.375,
+   "y": 344.375,
    "width": 164.45000000000002,
    "height": 16.25,
    "angle": 0,
@@ -2328,9 +2328,9 @@
    "id": "ar_st_dvc_job_etl",
    "type": "arrow",
    "x": 1060.0,
-   "y": 144.89795918367346,
+   "y": 145.91836734693877,
    "width": 100.0,
-   "height": 85.62835660580024,
+   "height": 87.23952738990334,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -2357,15 +2357,15 @@
     ],
     [
      -25.0,
-     5.102040816326536
+     4.081632653061234
     ],
     [
      -25.0,
-     75.10204081632654
+     74.08163265306123
     ],
     [
      -100.0,
-     85.62835660580024
+     87.23952738990334
     ]
    ],
    "lastCommittedPoint": null,
@@ -2423,9 +2423,9 @@
    "id": "ar_job_etl_st_lake",
    "type": "arrow",
    "x": 960.0,
-   "y": 254.0566037735849,
+   "y": 260.0943396226415,
    "width": 100.0,
-   "height": 2.830188679245282,
+   "height": 4.716981132075432,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -2459,7 +2459,7 @@
     ],
     [
      100.0,
-     -2.830188679245282
+     -4.716981132075432
     ]
    ],
    "lastCommittedPoint": null,
@@ -2481,7 +2481,7 @@
    "id": "ar_job_etl_st_lake_t",
    "type": "text",
    "x": 952.8,
-   "y": 236.39150943396226,
+   "y": 241.4858490566038,
    "width": 114.4,
    "height": 32.5,
    "angle": 0,
@@ -2517,7 +2517,7 @@
    "id": "ar_job_etl_st_pg",
    "type": "arrow",
    "x": 960.0,
-   "y": 329.33962264150944,
+   "y": 339.33962264150944,
    "width": 100.0,
    "height": 33.01886792452831,
    "angle": 0,
@@ -2575,7 +2575,7 @@
    "id": "ar_job_etl_st_pg_t",
    "type": "text",
    "x": 934.925,
-   "y": 337.7240566037736,
+   "y": 347.7240566037736,
    "width": 150.15,
    "height": 16.25,
    "angle": 0,
@@ -2611,9 +2611,9 @@
    "id": "ar_src_active_job_poller",
    "type": "arrow",
    "x": 440.0,
-   "y": 546.3725490196078,
+   "y": 558.1372549019608,
    "width": 100.0,
-   "height": 15.686274509803866,
+   "height": 21.568627450980443,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -2647,7 +2647,7 @@
     ],
     [
      100.0,
-     15.686274509803866
+     21.568627450980443
     ]
    ],
    "lastCommittedPoint": null,
@@ -2669,7 +2669,7 @@
    "id": "ar_src_active_job_poller_t",
    "type": "text",
    "x": 454.25,
-   "y": 546.0906862745098,
+   "y": 560.796568627451,
    "width": 71.5,
    "height": 16.25,
    "angle": 0,
@@ -2705,9 +2705,9 @@
    "id": "ar_src_ubilling_job_poller",
    "type": "arrow",
    "x": 440.0,
-   "y": 619.3137254901961,
+   "y": 631.0784313725491,
    "width": 100.0,
-   "height": 7.84313725490199,
+   "height": 1.9607843137255259,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -2741,7 +2741,7 @@
     ],
     [
      100.0,
-     -7.84313725490199
+     -1.9607843137255259
     ]
    ],
    "lastCommittedPoint": null,
@@ -2763,7 +2763,7 @@
    "id": "ar_src_ubilling_job_poller_t",
    "type": "text",
    "x": 468.55,
-   "y": 607.2671568627452,
+   "y": 621.9730392156863,
    "width": 42.900000000000006,
    "height": 16.25,
    "angle": 0,
@@ -2799,9 +2799,9 @@
    "id": "ar_job_poller_st_pg",
    "type": "arrow",
    "x": 960.0,
-   "y": 531.6037735849056,
+   "y": 553.6792452830189,
    "width": 100.0,
-   "height": 30.18867924528297,
+   "height": 33.96226415094338,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -2835,7 +2835,7 @@
     ],
     [
      100.0,
-     -30.18867924528297
+     -33.96226415094338
     ]
    ],
    "lastCommittedPoint": null,
@@ -2857,7 +2857,7 @@
    "id": "ar_job_poller_st_pg_t",
    "type": "text",
    "x": 970.675,
-   "y": 508.3844339622642,
+   "y": 528.5731132075472,
    "width": 78.65,
    "height": 16.25,
    "angle": 0,
@@ -2893,7 +2893,7 @@
    "id": "ar_src_tg_job_tg",
    "type": "arrow",
    "x": 440.0,
-   "y": 745.0,
+   "y": 770.0,
    "width": 100.0,
    "height": 0.0,
    "angle": 0,
@@ -2951,7 +2951,7 @@
    "id": "ar_src_tg_job_tg_t",
    "type": "text",
    "x": 450.675,
-   "y": 736.875,
+   "y": 761.875,
    "width": 78.65,
    "height": 16.25,
    "angle": 0,
@@ -2987,9 +2987,9 @@
    "id": "ar_job_tg_st_pg",
    "type": "arrow",
    "x": 960.0,
-   "y": 745.0,
+   "y": 770.0,
    "width": 100.0,
-   "height": 232.5925925925926,
+   "height": 243.51851851851848,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -3020,11 +3020,11 @@
     ],
     [
      50.0,
-     -215.0
+     -225.0
     ],
     [
      100.0,
-     -232.5925925925926
+     -243.51851851851848
     ]
    ],
    "lastCommittedPoint": null,
@@ -3081,10 +3081,10 @@
   {
    "id": "ar_st_pg_tr_train",
    "type": "arrow",
-   "x": 1484.032258064516,
-   "y": 320.0,
-   "width": 195.16129032258073,
-   "height": 110.0,
+   "x": 1500.0,
+   "y": 321.0,
+   "width": 161.45161290322585,
+   "height": 91.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -3117,8 +3117,8 @@
      0.0
     ],
     [
-     195.16129032258073,
-     -110.0
+     161.45161290322585,
+     -91.0
     ]
    ],
    "lastCommittedPoint": null,
@@ -3176,9 +3176,9 @@
    "id": "ar_tr_train_tr_mlflow",
    "type": "arrow",
    "x": 1830.0,
-   "y": 210.0,
+   "y": 230.0,
    "width": 0.0,
-   "height": 40.0,
+   "height": 20.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -3212,7 +3212,7 @@
     ],
     [
      0.0,
-     40.0
+     20.0
     ]
    ],
    "lastCommittedPoint": null,
@@ -3234,7 +3234,7 @@
    "id": "ar_tr_train_tr_mlflow_t",
    "type": "text",
    "x": 1737.05,
-   "y": 221.875,
+   "y": 231.875,
    "width": 185.9,
    "height": 16.25,
    "angle": 0,
@@ -3270,9 +3270,9 @@
    "id": "ar_tr_mlflow_models",
    "type": "arrow",
    "x": 1830.0,
-   "y": 340.0,
+   "y": 360.0,
    "width": 0.0,
-   "height": 40.0,
+   "height": 20.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -3306,7 +3306,7 @@
     ],
     [
      0.0,
-     40.0
+     20.0
     ]
    ],
    "lastCommittedPoint": null,
@@ -3328,7 +3328,7 @@
    "id": "ar_tr_mlflow_models_t",
    "type": "text",
    "x": 1758.5,
-   "y": 351.875,
+   "y": 361.875,
    "width": 143.0,
    "height": 16.25,
    "angle": 0,
@@ -3363,9 +3363,9 @@
   {
    "id": "ar_models_sv_forecast",
    "type": "arrow",
-   "x": 1966.0,
+   "x": 1977.7777777777778,
    "y": 380.0,
-   "width": 304.0,
+   "width": 295.55555555555566,
    "height": 190.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
@@ -3399,7 +3399,7 @@
      0.0
     ],
     [
-     304.0,
+     295.55555555555566,
      -190.0
     ]
    ],
@@ -3421,7 +3421,7 @@
   {
    "id": "ar_models_sv_forecast_t",
    "type": "text",
-   "x": 2092.975,
+   "x": 2100.5305555555556,
    "y": 276.875,
    "width": 50.050000000000004,
    "height": 16.25,
@@ -3458,9 +3458,9 @@
    "id": "ar_models_sv_api",
    "type": "arrow",
    "x": 2060.0,
-   "y": 409.55357142857144,
+   "y": 415.44642857142856,
    "width": 100.0,
-   "height": 24.10714285714289,
+   "height": 25.89285714285711,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -3494,7 +3494,7 @@
     ],
     [
      100.0,
-     -24.10714285714289
+     -25.89285714285711
     ]
    ],
    "lastCommittedPoint": null,
@@ -3516,7 +3516,7 @@
    "id": "ar_models_sv_api_t",
    "type": "text",
    "x": 2084.975,
-   "y": 389.375,
+   "y": 394.375,
    "width": 50.050000000000004,
    "height": 16.25,
    "angle": 0,
@@ -3552,7 +3552,7 @@
    "id": "ar_st_pg_sv_forecast",
    "type": "arrow",
    "x": 1500.0,
-   "y": 499.48275862068965,
+   "y": 501.8965517241379,
    "width": 660.0,
    "height": 505,
    "angle": 0,
@@ -3581,23 +3581,23 @@
     ],
     [
      70.0,
-     20.51724137931035
+     18.103448275862092
     ],
     [
      70.0,
-     -484.48275862068965
+     -486.8965517241379
     ],
     [
      620.0,
-     -484.48275862068965
+     -486.8965517241379
     ],
     [
      620.0,
-     -384.48275862068965
+     -386.8965517241379
     ],
     [
      660.0,
-     -384.48275862068965
+     -386.8965517241379
     ]
    ],
    "lastCommittedPoint": null,
@@ -3749,7 +3749,7 @@
    "id": "ar_job_poller_sv_api",
    "type": "arrow",
    "x": 540.0,
-   "y": 599.1176470588235,
+   "y": 625.0,
    "width": 1665.0,
    "height": 525,
    "angle": 0,
@@ -3778,23 +3778,23 @@
     ],
     [
      -45.0,
-     0.8823529411764639
+     0.0
     ],
     [
      -45.0,
-     255.88235294117646
+     230.0
     ],
     [
      1595.0,
-     255.88235294117646
+     230.0
     ],
     [
      1595.0,
-     -269.11764705882354
+     -295.0
     ],
     [
      1620.0,
-     -269.11764705882354
+     -295.0
     ]
    ],
    "lastCommittedPoint": null,
