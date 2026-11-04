@@ -2,7 +2,7 @@
 
 Course project for KSE "Introduction to MLOps and ML System Design" (2026). The full design is in [docs/design.md](docs/design.md).
 
-**Status:** Lab 2. Raw data versioned with DVC on MinIO, a monthly Airflow ETL with a quality gate, an Airflow DAG that archives the alerts.in.ua history twice a month, feature tables (v3), rule baselines vs trained models on a time split, MLflow tracking and registry with lineage, one-command reproduction, and an optional Feast demo. History runs 2022-03 … 2026-08 (official file) plus 2026-10 from the API, the first month of the red/yellow alert system. Runs locally with Docker Compose; built and tested on Apple Silicon.
+**Status:** Lab 2. Raw data versioned with DVC on MinIO, a monthly Airflow ETL with a quality gate, an Airflow DAG that archives the alerts.in.ua history twice a month, feature tables (v3), rule baselines vs trained models on a time split, MLflow tracking and registry with lineage, one-command reproduction. History runs 2022-03 … 2026-08 (official file) plus 2026-10 from the API, the first month of the red/yellow alert system. Runs locally with Docker Compose; built and tested on Apple Silicon.
 
 **Not built yet:** the live poller, the `forecast_6h` DAG and the API (Lab 4), Telegram ingestion and M3 (Lab 3). The full picture, built and planned, with every schedule: [docs/diagrams/kyiv_alerts_system.excalidraw](docs/diagrams/kyiv_alerts_system.excalidraw) (open in excalidraw.com or the VS Code Excalidraw extension).
 
@@ -265,17 +265,6 @@ Note the bad batch passed the size check (0.996), because merged episodes hide d
 
 `features.m1_hourly` (one row per hour) and `features.m2_alert` (one row per Kyiv alert), each with `feature_version = v3` and the label alongside. Features about other regions count only Kyiv's six neighbour oblasts (Kyivska, Zhytomyrska, Chernihivska, Cherkaska, Poltavska, Vinnytska). The serving-time source of every feature is in [design.md §5.3](docs/design.md#53-techniques). All features come from one module, [src/kyiv_alerts/features.py](src/kyiv_alerts/features.py), that Lab 4's service will reuse on live state.
 
-**Optional: Feast point-in-time demo.** [feature_repo/](feature_repo/) defines entity `city` and feature view `kyiv_state` (the issue-time M1 inputs, one row per 04:00 / 10:00 / 16:00 / 22:00 issue) over the exported snapshot. `make feast-demo` asks for the state at a time between two rows and checks that Feast returns the earlier one:
-
-```
-$ make feast-demo
-feature row A at 2026-08-27 04:00:00+03:00: {'neighbours_under_alert_at_issue': 6, 'days_since_long_alert': 6.81, 'kyiv_alert_min_prev_12h': 145.8, 'neighbour_starts_prev_12h': 14, 'kyiv_under_alert_at_issue': 0}
-feature row B at 2026-08-27 10:00:00+03:00: {'neighbours_under_alert_at_issue': 2, 'days_since_long_alert': 0.11, 'kyiv_alert_min_prev_12h': 386.3, 'neighbour_starts_prev_12h': 13, 'kyiv_under_alert_at_issue': 1}
-requested at     2026-08-27 07:00:00+03:00
-Feast returned   {'neighbours_under_alert_at_issue': 6.0, 'days_since_long_alert': 6.81, 'kyiv_alert_min_prev_12h': 145.8, 'neighbour_starts_prev_12h': 14.0, 'kyiv_under_alert_at_issue': 0.0}
-point-in-time correct (returned the earlier row A): True
-```
-
 ## 5. Baseline vs model (time split)
 
 Hold-out 2026-03-01 … 2026-08-28 (the official file stops on 2026-08-29); training data from 2023-01-01. Why a time split, why these dates and why an expanding window: [design.md §5.4](docs/design.md#54-experimentation-and-validation). Lower is better for Brier, log-loss and pinball.
@@ -380,7 +369,6 @@ src/kyiv_alerts/
                                    snapshot; sql/warehouse.sql
   training/                        train, models, metrics, tracking (TrackedRun), lineage, reproduce
 configs/train.yaml                 split dates and hyperparameters
-feature_repo/                      Feast offline demo (optional)
 scripts/                           seeding, bad batch, Airflow run / backfill helpers
 docker/, docker-compose.yml        local stack (Airflow, MLflow images, Postgres init)
 data/raw.dvc, data/features.dvc,   data versions (contents live in the DVC remote)

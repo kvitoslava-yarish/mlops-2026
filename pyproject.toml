@@ -23,9 +23,6 @@ dev = [
     "pytest>=8.3",
     "ruff>=0.14",
 ]
-feast = [
-    "feast==0.66.0",
-]
 
 [build-system]
 requires = ["hatchling"]

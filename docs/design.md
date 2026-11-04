@@ -247,7 +247,7 @@ Labels: `label_start` (M1, a Kyiv alert started in the hour) and `duration_min` 
 | Kyiv alerts | 470 | 379 | 75 | 10 |
 | Median / P90 duration, min | 39 / 233 | 30 / 116 | 24 / 72 | 20 / 28 |
 
-**Point-in-time joins.** Training rows are built by the pipeline as of *t*, so no join can pull in a later row. The optional Feast demo (`feature_repo/`, 7.1) shows the same property for a feature-store lookup: a request between two issue times gets the earlier row.
+**Point-in-time correctness.** Training rows are built by the pipeline as of *t* (issue time or alert start) from alerts that started before *t*, so no join can pull in a later row; `tests/test_features.py` checks it.
 
 ### 5.4 Experimentation and validation
 
@@ -328,7 +328,6 @@ flowchart TB
     train["make train → kyiv_alerts.training.train<br/>rule baselines + HistGradientBoosting"]
     mlf["MLflow 3.16.1 tracking server<br/>backend: PostgreSQL db mlflow · artifacts: MinIO bucket mlflow"]
     reg["Model registry<br/>kyiv-m1-start-risk · kyiv-m2-duration<br/>tags data_version + git_commit · alias champion"]
-    feast["Feast 0.66 offline demo<br/>feature_repo/ (point-in-time join)"]
     serve["Lab 4: forecast_6h DAG + API<br/>same features.py on live state"]
 
     off --> dvcraw
@@ -345,7 +344,6 @@ flowchart TB
     qc -- "gate_passed" --> dwh
     feat -- "make snapshot" --> snap
     snap -- "training path" --> train
-    snap --> feast
     train -- "params, metrics, lineage tags" --> mlf
     mlf -- "register" --> reg
     reg -- "load by alias champion" --> serve
@@ -356,7 +354,7 @@ flowchart TB
 
 - Rerunning a month is harmless: `extract` reuses the immutable raw file, and `load` / `build_features` delete and re-insert that month inside one transaction.
 - Quality gate (`src/kyiv_alerts/etl/quality.py`): invalid records ≤ 1% after de-duplication; batch size within ±50% of the median of the last 3 passed batches; no duplicate (oblast, start); newest alert ≤ 48 h before month end; Kyiv present; previous month loaded (feature lookback); M1 rows = hours in the month; M2 rows = Kyiv alerts; no feature nulls; one `feature_version`. A failure marks the batch in `dwh.batch_audit`, fails the run, and keeps the batch out of the training snapshot.
-- Feature store = PostgreSQL feature tables (offline + the online lookups Lab 4 needs) with a DVC-versioned Parquet snapshot for training. Feast runs as an offline demo only (7.1).
+- Feature store = PostgreSQL feature tables (offline + the online lookups Lab 4 needs) with a DVC-versioned Parquet snapshot for training. No Feast (7.1).
 - Lab 3 adds the Telegram ingestion; Lab 4 adds the poller, the forecast DAG and the API that read the same feature code.
 
 #### Deployment, first draft
@@ -430,7 +428,7 @@ Lab 2 runs as one `docker compose` project on the laptop (`docker-compose.yml`, 
 | Warehouse, serving DB | PostgreSQL 16; databases `airflow`, `mlflow`, `warehouse` | `postgres`, 5433 | Amazon RDS for PostgreSQL |
 | Orchestrator | Airflow 3.3.1, LocalExecutor (api-server, scheduler, dag-processor) | `airflow-*`, 8080 | Amazon MWAA |
 | Tracking, registry | MLflow 3.16.1, PostgreSQL backend, MinIO artifacts (proxied) | `mlflow`, 5001 (macOS AirPlay holds 5000) | SageMaker with MLflow |
-| Feature store | PostgreSQL tables + DVC Parquet snapshot; Feast 0.66.0 offline demo | — | SageMaker Feature Store |
+| Feature store | PostgreSQL tables + DVC Parquet snapshot | — | SageMaker Feature Store |
 | Container registry | Minikube registry (Lab 4) | — | Amazon ECR |
 | Cluster (API, poller) | Minikube 1.33.1, Kubernetes 1.30.0 (Lab 4) | — | Amazon EKS |
 | Model monitoring | Evidently (Lab 4) | — | SageMaker Model Monitor |
@@ -554,7 +552,7 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 | One binary label per night | arbitrary threshold, no timing | rejected → hourly M1 |
 | 12-h horizon issued at 10:00 / 22:00 (Lab 1–2 design) | skill sits in the first 1–2 hours; averaged over 12 h AUC 0.591, below the 0.60 guardrail (5.1) | replaced → 6 h every 6 h (AUC 0.610) |
 | Sliding 3-month training window | lost to the hour-of-day baseline in every test month (−2.9% Brier, AUC 0.542); too few starts, no seasonality (5.4) | rejected → expanding window, monthly retrain |
-| Feast as the serving feature store | 19 features from two tables; another service on 4 GB. Its key property, point-in-time joins, is shown offline (`feature_repo/`, `make feast-demo`) | offline demo only; serving reads PostgreSQL |
+| Feast as the feature store | 20 features from two tables, already built as of *t* by the pipeline (no join that could leak); another service on 4 GB | rejected; training reads the DVC snapshot, serving reads PostgreSQL |
 | Kafka + Spark | ~1.4 Kyiv alerts/day; 20 s polling is enough | rejected |
 | alerts.in.ua API directly for live alerts | official feed; needs a token (requested, not received) | Ubilling proxy (`source=aiu`, same schema) for now; switch when the token arrives |
 | Telethon instead of web preview | needs a personal account and a session secret | fallback only |
@@ -591,7 +589,7 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 
 ### 7.4 Milestones
 
-- **Lab 2 (done):** DVC-versioned raw data on MinIO; `alerts_etl` monthly DAG with idempotent loads and a quality gate; feature tables with `feature_version`; M1 and M2 rule baselines vs GBMs on a time split; MLflow with lineage tags, registry and `champion` alias; one-command reproduction; Feast point-in-time demo; M1 6-h forecast with monthly refits and per-lead metrics; M2 monotonic constraints; alerts.in.ua history archived by a DAG; two-level (red/yellow) alert regime from 2026-10.
+- **Lab 2 (done):** DVC-versioned raw data on MinIO; `alerts_etl` monthly DAG with idempotent loads and a quality gate; feature tables with `feature_version`; M1 and M2 rule baselines vs GBMs on a time split; MLflow with lineage tags, registry and `champion` alias; one-command reproduction; M1 6-h forecast with monthly refits and per-lead metrics; M2 monotonic constraints; alerts.in.ua history archived by a DAG; two-level (red/yellow) alert regime from 2026-10.
 - **Lab 3:** Telegram ingestion (back-fill from 2024-01), threat-type parser, M3 and the Telegram features for M1/M2; LLM answers "what is the current threat to Kyiv and why this forecast", retrieving Air Force posts from pgvector; evaluated on a fixed question set.
 - **Lab 4:** API + poller on Minikube with probes; forecast DAG; Evidently / Prometheus / Grafana; replayed drifts (raion switch, 2025 long nights, source switch) reach on-call.
 - **Lab 5:** agent with tools (active alerts, forecast, duration, post search); traced, ten-task evaluation.

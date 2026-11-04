@@ -227,7 +227,6 @@ __marimo__/
 /data/fixtures/
 mlruns/
 mlartifacts/
-feature_repo/data/
 # secrets (alerts.in.ua token, Telegram session)
 .env
 *.session

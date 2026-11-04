@@ -11,7 +11,7 @@ MODEL    ?= kyiv-m1-start-risk
 ALIAS    ?= champion
 
 .PHONY: setup lint test env up down nuke ps logs data data-seed run backfill bad-batch \
-        row-counts snapshot train reproduce feast-demo api-smoke
+        row-counts snapshot train reproduce api-smoke
 
 ## --- environment ----------------------------------------------------------
 setup:            ## pinned Python env from uv.lock
@@ -80,9 +80,6 @@ train:            ## train M1 + M2 with baselines, log to MLflow, register (CHAM
 
 reproduce:        ## rerun a registered version from its tags: make reproduce MODEL=... ALIAS=champion
 	uv run python -m kyiv_alerts.training.reproduce --model $(MODEL) $(if $(VERSION),--version $(VERSION),--alias $(ALIAS))
-
-feast-demo:       ## optional: Feast point-in-time retrieval on the exported M1 features
-	uv run --group feast python feature_repo/demo.py
 
 api-smoke:        ## check ALERTS_IN_UA_TOKEN: fetch the last 30 days for Kyiv only
 	uv run python -m kyiv_alerts.sources.alerts_in_ua
