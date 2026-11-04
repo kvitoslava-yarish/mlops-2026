@@ -16,7 +16,6 @@ FIRST_BATCH = "2022-03"
 MAX_INVALID_SHARE = 0.01
 MAX_SIZE_DEVIATION = 0.5
 MAX_STALENESS_H = 48
-# Upstream gaps reviewed and accepted, with the staleness limit that applies instead.
 # Two-level alerts (yellow = drones, red = missiles / ballistic): from this month the only
 # source is alerts.in.ua, and Kyiv gets ~3x more alerts than in the single-level history.
 # Batch size is compared within a regime, so the switch does not fail every later month.
