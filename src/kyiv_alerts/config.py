@@ -13,7 +13,7 @@ class Settings:
     aws_secret_access_key: str
     lake_bucket: str
     raw_data_dir: Path
-    api_archive_dir: Path
+    alerts_in_ua_token: str
 
 
 def get_settings() -> Settings:
@@ -26,7 +26,5 @@ def get_settings() -> Settings:
         aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY", "minioadmin123"),
         lake_bucket=os.getenv("LAKE_BUCKET", "lake"),
         raw_data_dir=Path(os.getenv("RAW_DATA_DIR", str(REPO_ROOT / "data" / "raw"))),
-        api_archive_dir=Path(
-            os.getenv("API_ARCHIVE_DIR", str(REPO_ROOT / "data" / "api" / "alerts_in_ua"))
-        ),
+        alerts_in_ua_token=os.getenv("ALERTS_IN_UA_TOKEN", ""),
     )

@@ -164,14 +164,14 @@ Baseline window summary (2025–26): P(at least one start) = 0.46 for 22–04, 0
 |---|---|---|---|
 | [Vadimkin dataset](https://github.com/Vadimkin/ukrainian-air-raid-sirens-dataset) `official_data_en.csv` (MIT) | official alerts, UTC, oblast / raion / hromada level; 299,275 rows, 2022-03-15 … 2026-09-07 | upstream commit `58ee75b` (2026-09-08, the last update of this file) | batches 2022-03 … 2026-08 (the only pipeline source): history, labels |
 | same repo `volunteer_data_en.csv` | oblast-level alerts, `naive` = guessed end; 9.1 MB, 118,544 rows, 2022-02-25 … 2026-10-24 | upstream commit `346bcff` (2026-10-24) | cross-checks only (coarser: 1.3–1.8× more episodes), not a pipeline source |
-| [alerts.in.ua API](https://devs.alerts.in.ua/) `regions/{uid}/alerts/month_ago.json` | alerts of the last 30 days per oblast, raion level, with `alert_level`: **yellow** = drone threat (30 s siren), **red** = missile / ballistic / massive attack (1 min siren); 25 requests at 2/min | each fetch archived under DVC (`make api-fetch` → `data/api/alerts_in_ua/month_ago_<fetch time>/`); first fetch 2026-11-04 (covers 2026-10-04 …) | 2026-10 onwards: the pipeline builds a month from the union of archived fetches |
+| [alerts.in.ua API](https://devs.alerts.in.ua/) `regions/{uid}/alerts/month_ago.json` | alerts of the last 30 days per oblast, raion level, with `alert_level`: **yellow** = drone threat (30 s siren), **red** = missile / ballistic / massive attack (1 min siren); 25 requests at 2/min | DAG `fetch_alerts_in_ua` on the 1st and 15th, 00:30 UTC: each fetch kept as an immutable folder in the lake (`raw/alerts_in_ua/month_ago_<fetch time>/`); first fetch 2026-11-04 (covers 2026-10-04 …, also under DVC as `data/api.dvc`) | 2026-10 onwards: the pipeline builds a month from the union of archived fetches |
 | [Ubilling Aerial Alerts API](https://wiki.ubilling.net.ua/doku.php?id=aerialalertsapi), `?source=aiu&raw` | **active** alerts as published by alerts.in.ua, no token: `started_at` (exact, UTC), `location_type` (oblast / raion / hromada), `alert_type`, `alert_level` (red / yellow); no history, `finished_at` always null | live, checked 2026-10-25 | Lab 4 poller: M2 trigger, live features, own alert log (new batches and labels at raion level, like the official file) |
 | same API, `?source=ual&raw` | the same from ukrainealarm.com (`createdAt`, `alertLevel`, `type: AIR`) | live | backup when `aiu` fails or is stale |
 | Telegram [@kpszsu](https://t.me/s/kpszsu) | typed Air Force posts | — | moved to Lab 3 (with M3 and the retrieval corpus) |
 
 **Live feed check (2026-10-25).** The proxy's `default` source (Vadym Klymenko API) returns `changed: 1970-01-01` for most regions → unusable timestamps, so the poller pins `source=aiu`. Its JSON matches the alerts.in.ua API, so switching to the direct API once the token arrives changes only the URL and auth. At the same moment the `ual` cache was ~4 min older than `aiu` → every response's `cachedat` is checked (6.6). The feed lists only active alerts: an alert's end is the first poll where it is gone (±20 s). Filters: `alert_type = air_raid`; drop permanent alerts (Luhansk since 2022-04-04, Crimea since 2022-12-10), as in the dataset. The proxy has no history, so it cannot back-fill past months: batches 2026-09 and 2026-10 wait for alerts.in.ua `month_ago`; from Lab 4 the poller's own log produces new monthly batches.
 
-**Batch grain:** one calendar month in UTC, equal to the run's data interval (`CronDataIntervalTimetable("@monthly", timezone="UTC")`). A batch holds 1.7k–16k raw records → 0.8k–2.2k oblast episodes (official file) → 672–744 M1 rows (one per hour) and 6–135 M2 rows (one per Kyiv alert).
+**Batch grain:** one calendar month in UTC, equal to the run's data interval (`CronDataIntervalTimetable("0 3 1 * *", timezone="UTC")`: 03:00 on the 1st, after the alerts.in.ua fetch at 00:30). A batch holds 1.7k–16k raw records → 0.8k–2.2k oblast episodes (official file) → 672–744 M1 rows (one per hour) and 6–135 M2 rows (one per Kyiv alert).
 
 **Label delay:** M1 → end of the hour (a 6-h window is fully labelled 6 h after issue). M2 → end of the alert (median 38, P90 161, max 673 min). In the monthly pipeline every label of a batch is known when the batch runs, after the month ends.
 
@@ -370,7 +370,7 @@ flowchart LR
         tg["Telegram @kpszsu<br/>Air Force posts"]
     end
     subgraph laptop["Laptop · Minikube — scheduled (batch) side"]
-        af["<b>Apache Airflow 3.3.1</b><br/>DAGs: alerts_etl (Lab 2),<br/>ingest_telegram (Lab 3), forecast_6h (Lab 4)<br/><i>AWS: MWAA</i>"]
+        af["<b>Apache Airflow 3.3.1</b><br/>DAGs: alerts_etl, fetch_alerts_in_ua (Lab 2),<br/>ingest_telegram (Lab 3), forecast_6h (Lab 4)<br/><i>AWS: MWAA</i>"]
         minio[("<b>MinIO</b> pgsty/silo<br/>buckets dvc · lake · mlflow<br/><i>AWS: S3</i>")]
         dvc["<b>DVC 3.67.1</b><br/>data versions<br/><i>AWS: S3 remote</i>"]
         mlf["<b>MLflow 3.16.1</b><br/>runs + model registry<br/><i>AWS: SageMaker with MLflow</i>"]

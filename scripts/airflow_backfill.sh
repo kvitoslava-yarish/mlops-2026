@@ -10,7 +10,7 @@ airflow() { docker compose exec -T airflow-scheduler airflow "$@"; }
 
 airflow dags unpause alerts_etl >/dev/null
 airflow backfill create --dag-id alerts_etl \
-    --from-date "${from}-01T00:00:00+00:00" --to-date "${to}-01T00:00:00+00:00" \
+    --from-date "${from}-01T00:00:00+00:00" --to-date "${to}-01T03:00:00+00:00" \
     --reprocess-behavior completed --max-active-runs 1
 echo "waiting for the backfill (one month at a time) ..."
 while :; do

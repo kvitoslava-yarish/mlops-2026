@@ -1,16 +1,16 @@
 """alerts.in.ua API: alerts of the last 30 days, per oblast, with their level.
 
-``month_ago`` only reaches 30 days back, so ``make api-fetch`` archives each response
-under DVC (data/api/alerts_in_ua/month_ago_<fetch time>/<uid>.json) and the pipeline
-builds months from the union of all archived fetches, never from a live request.
+``month_ago`` only reaches 30 days back, so the DAG ``fetch_alerts_in_ua`` (1st and 15th)
+archives each response in the lake (raw/alerts_in_ua/month_ago_<fetch time>/<uid>.json)
+and the pipeline builds months from the union of all archived fetches.
 Levels: yellow = drone threat (30 s siren), red = missile / ballistic / massive attack
 (1 min siren); both are air-raid alerts. Limits: 2 history requests/min.
 """
 
 import json
 import time
+from collections.abc import Callable, Iterable
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pandas as pd
 import requests
@@ -34,19 +34,16 @@ OBLAST_UIDS = {
 }  # fmt: skip
 
 
-def archive_month_ago(
-    token: str, out_root: Path, pause_s: float = 31.0, timeout_s: float = 30.0
-) -> Path:
-    """Save every oblast's ``month_ago`` response, untouched, under one folder per fetch.
+ARCHIVE_PREFIX = "raw/alerts_in_ua"
+WINDOW = timedelta(days=30)  # month_ago reaches about 30 days back from the fetch
 
-    ``month_ago`` only reaches 30 days back, so these files are the only lasting copy of
-    the API history: they are versioned with DVC (``make api-fetch``). Each region is
-    written as soon as it arrives, so an interrupted fetch keeps what it already got.
-    The fetch time names the folder; it is ingestion metadata, never a batch key.
-    """
-    fetched_at = datetime.now(UTC).strftime("%Y-%m-%dT%H%M%SZ")
-    out = out_root / f"month_ago_{fetched_at}"
-    out.mkdir(parents=True, exist_ok=False)
+
+def archive_month_ago(
+    token: str, put: Callable[[str, bytes], object], pause_s: float = 31.0, timeout_s: float = 30.0
+) -> str:
+    """Save every oblast's ``month_ago`` response, untouched, under one folder per fetch.
+    The fetch time names the folder: it is when the 30-day window ends, not a batch key."""
+    folder = f"{ARCHIVE_PREFIX}/month_ago_{datetime.now(UTC):%Y-%m-%dT%H%M%SZ}"
     headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
     for i, uid in enumerate(sorted(OBLAST_UIDS)):
         if i:
@@ -57,37 +54,35 @@ def archive_month_ago(
             time.sleep(60)
             resp = requests.get(url, headers=headers, timeout=timeout_s)
         resp.raise_for_status()
-        (out / f"{uid:02d}.json").write_bytes(resp.content)
+        put(f"{folder}/{uid:02d}.json", resp.content)
         n = len(resp.json().get("alerts", []))
-        print(
-            f"[{i + 1:2d}/{len(OBLAST_UIDS)}] {uid:2d} {OBLAST_UIDS[uid]:24s} {n:5d} alerts",
-            flush=True,
-        )
-    return out
+        print(f"[{i + 1:2d}/{len(OBLAST_UIDS)}] {uid:2d} {OBLAST_UIDS[uid]:24s} {n:5d} alerts")
+    return folder
 
 
-WINDOW = timedelta(days=30)  # month_ago reaches about 30 days back from the fetch
-
-
-def _fetch_time(folder: Path) -> datetime:
-    return datetime.strptime(folder.name, "month_ago_%Y-%m-%dT%H%M%SZ").replace(tzinfo=UTC)
-
-
-def read_archive(archive_root: Path) -> tuple[list[dict], list[tuple[datetime, datetime]]]:
+def read_archive(
+    files: Iterable[tuple[str, bytes]],
+) -> tuple[list[dict], list[tuple[datetime, datetime]]]:
     """All archived alerts, de-duplicated by alert id (latest ``updated_at`` wins, so an alert
-    that was still running in one fetch gets its end from a later one), and the time windows
-    the fetches cover."""
+    still running in one fetch gets its end from a later one), and the windows covered by
+    complete fetches (all oblasts present; a fetch that failed halfway adds alerts only)."""
     by_id: dict[int, dict] = {}
+    regions: dict[str, set[int]] = {}
+    for key, content in files:
+        folder, name = key.rsplit("/", 1)
+        uid = int(name.removesuffix(".json"))
+        regions.setdefault(folder, set()).add(uid)
+        for a in json.loads(content)["alerts"]:
+            a = {**a, "requested_oblast_uid": uid}
+            old = by_id.get(a["id"])
+            if old is None or (a.get("updated_at") or "") >= (old.get("updated_at") or ""):
+                by_id[a["id"]] = a
     windows = []
-    for folder in sorted(archive_root.glob("month_ago_*")):
-        fetched = _fetch_time(folder)
-        windows.append((fetched - WINDOW, fetched))
-        for f in sorted(folder.glob("*.json")):
-            for a in json.loads(f.read_text())["alerts"]:
-                a = {**a, "requested_oblast_uid": int(f.stem)}
-                old = by_id.get(a["id"])
-                if old is None or (a.get("updated_at") or "") >= (old.get("updated_at") or ""):
-                    by_id[a["id"]] = a
+    for folder, uids in sorted(regions.items()):
+        if uids >= set(OBLAST_UIDS):
+            fetched = datetime.strptime(folder.rsplit("/", 1)[-1], "month_ago_%Y-%m-%dT%H%M%SZ")
+            fetched = fetched.replace(tzinfo=UTC)
+            windows.append((fetched - WINDOW, fetched))
     return list(by_id.values()), windows
 
 
@@ -143,17 +138,12 @@ def to_raw_rows(alerts: list[dict], batch: Batch) -> pd.DataFrame:
 
 if __name__ == "__main__":
     # make api-smoke: one request (Kyiv City), nothing written.
-    # make api-fetch: `--archive DIR` saves all 25 oblasts' month_ago responses.
     import os
-    import sys
     from collections import Counter
 
     token = os.getenv("ALERTS_IN_UA_TOKEN", "")
     if not token:
         raise SystemExit("ALERTS_IN_UA_TOKEN is empty: put the token in .env")
-    if len(sys.argv) == 3 and sys.argv[1] == "--archive":
-        print(f"saved to {archive_month_ago(token, Path(sys.argv[2]))}")
-        raise SystemExit(0)
     resp = requests.get(
         f"{API_URL}/regions/31/alerts/month_ago.json",
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},

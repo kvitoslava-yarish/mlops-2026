@@ -1,9 +1,3 @@
-"""The six ETL steps for one monthly batch. The Airflow DAG is a thin wrapper.
-
-Data moves through storage, not XCom: raw and clean files in the MinIO lake,
-episodes and features in PostgreSQL. Each step returns a small dict for the next.
-"""
-
 import io
 
 import pandas as pd
@@ -39,13 +33,6 @@ def _read_raw(lake: Lake, key: str) -> pd.DataFrame:
 def extract(
     settings: Settings, batch: Batch, raw_override: str = "", refresh: bool = False
 ) -> dict:
-    """Write the batch's raw rows to the lake once; reruns reuse that immutable copy.
-
-    Source order: the pinned official file (must cover the whole month), then the
-    archived alerts.in.ua fetches (``make api-fetch``), which must cover the month
-    unless the gate lists it as an accepted gap. The volunteer file is kept for
-    cross-checks only: it is oblast-level and splits alerts differently.
-    """
     lake = Lake(settings)
     if raw_override:
         df = pd.read_csv(raw_override, dtype=str, keep_default_na=False)
@@ -65,7 +52,8 @@ def extract(
 
     df, source, covered = dataset.official_slice(settings.raw_data_dir, batch), "official", None
     if df is None:
-        alerts, windows = alerts_in_ua.read_archive(settings.api_archive_dir)
+        keys = lake.list(alerts_in_ua.ARCHIVE_PREFIX + "/")
+        alerts, windows = alerts_in_ua.read_archive((k, lake.get(k)) for k in keys)
         covered = alerts_in_ua.coverage(windows, batch)
         complete = covered == [(batch.start, batch.end)]
         if covered and (
@@ -76,7 +64,8 @@ def extract(
         have = ", ".join(f"{a:%Y-%m-%d %H:%M} .. {b:%Y-%m-%d %H:%M}" for a, b in covered or [])
         raise ValueError(
             f"no source covers {batch.month}: the pinned official file ends 2026-09-07 and "
-            f"the archived alerts.in.ua fetches cover [{have or 'nothing'}]; run make api-fetch"
+            f"the archived alerts.in.ua fetches cover [{have or 'nothing'}]; "
+            "trigger the DAG fetch_alerts_in_ua"
         )
     key = raw_key(batch, source)
     data = _csv(df)

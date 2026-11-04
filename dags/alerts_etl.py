@@ -17,7 +17,8 @@ def _batch(context):
 
 @dag(
     dag_id="alerts_etl",
-    schedule=CronDataIntervalTimetable("@monthly", timezone="UTC"),
+    # 03:00 on the 1st: after fetch_alerts_in_ua (00:30) has saved the month that just ended
+    schedule=CronDataIntervalTimetable("0 3 1 * *", timezone="UTC"),
     start_date=datetime(2022, 3, 1, tzinfo=UTC),
     catchup=False,
     max_active_runs=1,  # months build on the previous month's lookback

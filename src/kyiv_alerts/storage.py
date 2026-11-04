@@ -41,6 +41,10 @@ class Lake:
     def get(self, key: str) -> bytes:
         return self.s3.get_object(Bucket=self.bucket, Key=key)["Body"].read()
 
+    def list(self, prefix: str) -> list[str]:
+        pages = self.s3.get_paginator("list_objects_v2").paginate(Bucket=self.bucket, Prefix=prefix)
+        return sorted(o["Key"] for page in pages for o in page.get("Contents", []))
+
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()

@@ -11,7 +11,7 @@ MODEL    ?= kyiv-m1-start-risk
 ALIAS    ?= champion
 
 .PHONY: setup lint test env up down nuke ps logs data data-seed run backfill bad-batch \
-        row-counts snapshot train reproduce feast-demo api-smoke api-fetch
+        row-counts snapshot train reproduce feast-demo api-smoke
 
 ## --- environment ----------------------------------------------------------
 setup:            ## pinned Python env from uv.lock
@@ -86,9 +86,3 @@ feast-demo:       ## optional: Feast point-in-time retrieval on the exported M1 
 
 api-smoke:        ## check ALERTS_IN_UA_TOKEN: fetch the last 30 days for Kyiv only
 	uv run python -m kyiv_alerts.sources.alerts_in_ua
-
-api-fetch:        ## save all 25 oblasts' last-30-days history from alerts.in.ua; version with DVC
-	uv run python -m kyiv_alerts.sources.alerts_in_ua --archive data/api/alerts_in_ua
-	uv run dvc add data/api
-	uv run dvc push data/api.dvc
-	@echo "now commit data/api.dvc (run this at least every 3 weeks so no day is lost)"

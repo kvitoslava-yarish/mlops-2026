@@ -440,9 +440,9 @@
   {
    "id": "src_monthago_t",
    "type": "text",
-   "x": 64.0,
+   "x": 59.599999999999994,
    "y": 325.0,
-   "width": 352.0,
+   "width": 360.8,
    "height": 80.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
@@ -463,8 +463,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "alerts.in.ua month_ago.json (token)\nlast 30 days · 25 oblasts · red / yellow\nPULL: every 2–3 weeks\n+ right after the 1st of each month",
-   "originalText": "alerts.in.ua month_ago.json (token)\nlast 30 days · 25 oblasts · red / yellow\nPULL: every 2–3 weeks\n+ right after the 1st of each month",
+   "text": "alerts.in.ua month_ago.json (token)\nlast 30 days · 25 oblasts · red / yellow\nPULL: 1st + 15th of each month, 00:30 UTC\n(DAG fetch_alerts_in_ua)",
+   "originalText": "alerts.in.ua month_ago.json (token)\nlast 30 days · 25 oblasts · red / yellow\nPULL: 1st + 15th of each month, 00:30 UTC\n(DAG fetch_alerts_in_ua)",
    "fontSize": 16,
    "fontFamily": 2,
    "textAlign": "center",
@@ -767,8 +767,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "Airflow DAG alerts_etl\nSCHEDULE: @monthly, 1st 00:00 UTC\n(+ make run MONTH=…)\nextract → validate → transform →\nload → build_features → quality_check\nbatch = previous month (data interval)",
-   "originalText": "Airflow DAG alerts_etl\nSCHEDULE: @monthly, 1st 00:00 UTC\n(+ make run MONTH=…)\nextract → validate → transform →\nload → build_features → quality_check\nbatch = previous month (data interval)",
+   "text": "Airflow DAG alerts_etl\nSCHEDULE: 1st of month, 03:00 UTC\nafter the 00:30 fetch (+ make run)\nextract → validate → transform →\nload → build_features → quality_check\nbatch = previous month (data interval)",
+   "originalText": "Airflow DAG alerts_etl\nSCHEDULE: 1st of month, 03:00 UTC\nafter the 00:30 fetch (+ make run)\nextract → validate → transform →\nload → build_features → quality_check\nbatch = previous month (data interval)",
    "fontSize": 16,
    "fontFamily": 2,
    "textAlign": "center",
@@ -812,7 +812,7 @@
     },
     {
      "type": "arrow",
-     "id": "ar_job_apifetch_st_dvc"
+     "id": "ar_job_apifetch_st_lake"
     }
    ],
    "updated": 1,
@@ -822,9 +822,9 @@
   {
    "id": "job_apifetch_t",
    "type": "text",
-   "x": 569.6,
+   "x": 587.2,
    "y": 390.0,
-   "width": 360.8,
+   "width": 325.6,
    "height": 80.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
@@ -845,8 +845,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "make api-fetch (manual now)\n→ weekly DAG fetch_alerts_in_ua (planned)\nsaves month_ago for 25 oblasts\n→ data/api (DVC)",
-   "originalText": "make api-fetch (manual now)\n→ weekly DAG fetch_alerts_in_ua (planned)\nsaves month_ago for 25 oblasts\n→ data/api (DVC)",
+   "text": "Airflow DAG fetch_alerts_in_ua\nSCHEDULE: 1st + 15th, 00:30 UTC\nfetch 25 oblasts → check all saved\n→ lake raw/alerts_in_ua/<fetch time>/",
+   "originalText": "Airflow DAG fetch_alerts_in_ua\nSCHEDULE: 1st + 15th, 00:30 UTC\nfetch 25 oblasts → check all saved\n→ lake raw/alerts_in_ua/<fetch time>/",
    "fontSize": 16,
    "fontFamily": 2,
    "textAlign": "center",
@@ -1054,10 +1054,6 @@
     },
     {
      "type": "arrow",
-     "id": "ar_job_apifetch_st_dvc"
-    },
-    {
-     "type": "arrow",
      "id": "ar_st_dvc_job_etl"
     }
    ],
@@ -1068,9 +1064,9 @@
   {
    "id": "st_dvc_t",
    "type": "text",
-   "x": 1104.0,
+   "x": 1086.4,
    "y": 70.0,
-   "width": 352.0,
+   "width": 387.20000000000005,
    "height": 60.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
@@ -1091,8 +1087,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "DVC remote = MinIO bucket dvc\ndata/raw (CSVs) · data/api (API archive)\ndata/features (training snapshot)",
-   "originalText": "DVC remote = MinIO bucket dvc\ndata/raw (CSVs) · data/api (API archive)\ndata/features (training snapshot)",
+   "text": "DVC remote = MinIO bucket dvc\ndata/raw (CSVs) · data/api (first API fetch)\ndata/features (training snapshot)",
+   "originalText": "DVC remote = MinIO bucket dvc\ndata/raw (CSVs) · data/api (first API fetch)\ndata/features (training snapshot)",
    "fontSize": 16,
    "fontFamily": 2,
    "textAlign": "center",
@@ -1107,7 +1103,7 @@
    "x": 1060,
    "y": 200,
    "width": 440,
-   "height": 80,
+   "height": 90,
    "angle": 0,
    "strokeColor": "#2b8a3e",
    "backgroundColor": "#b2f2bb",
@@ -1132,6 +1128,10 @@
     },
     {
      "type": "arrow",
+     "id": "ar_job_apifetch_st_lake"
+    },
+    {
+     "type": "arrow",
      "id": "ar_job_etl_st_lake"
     }
    ],
@@ -1143,9 +1143,9 @@
    "id": "st_lake_t",
    "type": "text",
    "x": 1099.6,
-   "y": 220.0,
+   "y": 215.0,
    "width": 360.8,
-   "height": 40.0,
+   "height": 60.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -1165,8 +1165,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "MinIO bucket lake\nraw/alerts/YYYY-MM · clean/alerts/YYYY-MM",
-   "originalText": "MinIO bucket lake\nraw/alerts/YYYY-MM · clean/alerts/YYYY-MM",
+   "text": "MinIO bucket lake\nraw/alerts_in_ua/month_ago_<fetch time>/\nraw/alerts/YYYY-MM · clean/alerts/YYYY-MM",
+   "originalText": "MinIO bucket lake\nraw/alerts_in_ua/month_ago_<fetch time>/\nraw/alerts/YYYY-MM · clean/alerts/YYYY-MM",
    "fontSize": 16,
    "fontFamily": 2,
    "textAlign": "center",
@@ -1961,8 +1961,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "CADENCE (Kyiv time unless noted)\nevery 20 s ............ poller: active alerts (alerts.in.ua; Ubilling backup)\nevery 2 min ........... Telegram posts (Lab 3)\n04 · 10 · 16 · 22 ..... forecast_6h → M1, 6 hourly probabilities\neach Kyiv alert start . M2 duration via API (P50 / P90)\ndaily ................. drift + freshness checks (Lab 4)\nevery 2–3 weeks ....... make api-fetch (month_ago archive, ≤ 30 days back)\n1st of month (UTC) .... alerts_etl for the previous month → snapshot → train\non alarm .............. early retrain or FORCE_BASELINE",
-   "originalText": "CADENCE (Kyiv time unless noted)\nevery 20 s ............ poller: active alerts (alerts.in.ua; Ubilling backup)\nevery 2 min ........... Telegram posts (Lab 3)\n04 · 10 · 16 · 22 ..... forecast_6h → M1, 6 hourly probabilities\neach Kyiv alert start . M2 duration via API (P50 / P90)\ndaily ................. drift + freshness checks (Lab 4)\nevery 2–3 weeks ....... make api-fetch (month_ago archive, ≤ 30 days back)\n1st of month (UTC) .... alerts_etl for the previous month → snapshot → train\non alarm .............. early retrain or FORCE_BASELINE",
+   "text": "CADENCE (Kyiv time unless noted)\nevery 20 s ............ poller: active alerts (alerts.in.ua; Ubilling backup)\nevery 2 min ........... Telegram posts (Lab 3)\n04 · 10 · 16 · 22 ..... forecast_6h → M1, 6 hourly probabilities\neach Kyiv alert start . M2 duration via API (P50 / P90)\ndaily ................. drift + freshness checks (Lab 4)\n1st + 15th 00:30 UTC .. fetch_alerts_in_ua (month_ago archive, ≤ 30 days)\n1st 03:00 UTC ......... alerts_etl for the previous month → snapshot → train\non alarm .............. early retrain or FORCE_BASELINE",
+   "originalText": "CADENCE (Kyiv time unless noted)\nevery 20 s ............ poller: active alerts (alerts.in.ua; Ubilling backup)\nevery 2 min ........... Telegram posts (Lab 3)\n04 · 10 · 16 · 22 ..... forecast_6h → M1, 6 hourly probabilities\neach Kyiv alert start . M2 duration via API (P50 / P90)\ndaily ................. drift + freshness checks (Lab 4)\n1st + 15th 00:30 UTC .. fetch_alerts_in_ua (month_ago archive, ≤ 30 days)\n1st 03:00 UTC ......... alerts_etl for the previous month → snapshot → train\non alarm .............. early retrain or FORCE_BASELINE",
    "fontSize": 15,
    "fontFamily": 3,
    "textAlign": "center",
@@ -2008,9 +2008,9 @@
   {
    "id": "legend_t",
    "type": "text",
-   "x": 1094.375,
+   "x": 1073.75,
    "y": 933.125,
-   "width": 371.25000000000006,
+   "width": 412.50000000000006,
    "height": 93.75,
    "angle": 0,
    "strokeColor": "#1e1e1e",
@@ -2031,8 +2031,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "STATUS TODAY\nbuilt: alerts_etl, api-fetch, DVC, MinIO,\nPostgres, MLflow, training, M1 + M2 champions\nplanned: poller, forecast_6h, API,\nmonitoring (Lab 4), Telegram + M3 (Lab 3)",
-   "originalText": "STATUS TODAY\nbuilt: alerts_etl, api-fetch, DVC, MinIO,\nPostgres, MLflow, training, M1 + M2 champions\nplanned: poller, forecast_6h, API,\nmonitoring (Lab 4), Telegram + M3 (Lab 3)",
+   "text": "STATUS TODAY\nbuilt: alerts_etl, fetch_alerts_in_ua, DVC, MinIO,\nPostgres, MLflow, training, M1 + M2 champions\nplanned: poller, forecast_6h, API,\nmonitoring (Lab 4), Telegram + M3 (Lab 3)",
+   "originalText": "STATUS TODAY\nbuilt: alerts_etl, fetch_alerts_in_ua, DVC, MinIO,\nPostgres, MLflow, training, M1 + M2 champions\nplanned: poller, forecast_6h, API,\nmonitoring (Lab 4), Telegram + M3 (Lab 3)",
    "fontSize": 15,
    "fontFamily": 2,
    "textAlign": "center",
@@ -2196,9 +2196,9 @@
   {
    "id": "ar_src_monthago_job_apifetch_t",
    "type": "text",
-   "x": 436.375,
+   "x": 454.25,
    "y": 388.7377450980392,
-   "width": 107.25000000000001,
+   "width": 71.5,
    "height": 16.25,
    "angle": 0,
    "strokeColor": "#1e1e1e",
@@ -2219,8 +2219,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "every 2–3 weeks",
-   "originalText": "every 2–3 weeks",
+   "text": "1st + 15th",
+   "originalText": "1st + 15th",
    "fontSize": 13,
    "fontFamily": 2,
    "textAlign": "center",
@@ -2230,12 +2230,12 @@
    "autoResize": true
   },
   {
-   "id": "ar_job_apifetch_st_dvc",
+   "id": "ar_job_apifetch_st_lake",
    "type": "arrow",
    "x": 960.0,
    "y": 430.0,
    "width": 100.0,
-   "height": 305.55555555555554,
+   "height": 176.85185185185185,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -2266,11 +2266,11 @@
     ],
     [
      50.0,
-     -300.0
+     -175.0
     ],
     [
      100.0,
-     -305.55555555555554
+     -176.85185185185185
     ]
    ],
    "lastCommittedPoint": null,
@@ -2280,7 +2280,7 @@
     "gap": 6
    },
    "endBinding": {
-    "elementId": "st_dvc",
+    "elementId": "st_lake",
     "focus": 0,
     "gap": 6
    },
@@ -2289,11 +2289,11 @@
    "elbowed": false
   },
   {
-   "id": "ar_job_apifetch_st_dvc_t",
+   "id": "ar_job_apifetch_st_lake_t",
    "type": "text",
-   "x": 945.65,
-   "y": 271.875,
-   "width": 128.70000000000002,
+   "x": 927.775,
+   "y": 334.375,
+   "width": 164.45000000000002,
    "height": 16.25,
    "angle": 0,
    "strokeColor": "#1e1e1e",
@@ -2314,8 +2314,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "archive + dvc push",
-   "originalText": "archive + dvc push",
+   "text": "immutable fetch folders",
+   "originalText": "immutable fetch folders",
    "fontSize": 13,
    "fontFamily": 2,
    "textAlign": "center",
@@ -2386,10 +2386,10 @@
   {
    "id": "ar_st_dvc_job_etl_t",
    "type": "text",
-   "x": 943.875,
-   "y": 217.13815789473685,
-   "width": 107.25000000000001,
-   "height": 16.25,
+   "x": 924.225,
+   "y": 133.75,
+   "width": 121.55000000000001,
+   "height": 32.5,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -2409,8 +2409,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "read-only mount",
-   "originalText": "read-only mount",
+   "text": "official CSV\n(read-only mount)",
+   "originalText": "official CSV\n(read-only mount)",
    "fontSize": 13,
    "fontFamily": 2,
    "textAlign": "center",
@@ -2423,9 +2423,9 @@
    "id": "ar_job_etl_st_lake",
    "type": "arrow",
    "x": 960.0,
-   "y": 252.0754716981132,
+   "y": 254.0566037735849,
    "width": 100.0,
-   "height": 3.7735849056603854,
+   "height": 2.830188679245282,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -2459,7 +2459,7 @@
     ],
     [
      100.0,
-     -3.7735849056603854
+     -2.830188679245282
     ]
    ],
    "lastCommittedPoint": null,
@@ -2480,10 +2480,10 @@
   {
    "id": "ar_job_etl_st_lake_t",
    "type": "text",
-   "x": 970.675,
-   "y": 242.06367924528303,
-   "width": 78.65,
-   "height": 16.25,
+   "x": 952.8,
+   "y": 236.39150943396226,
+   "width": 114.4,
+   "height": 32.5,
    "angle": 0,
    "strokeColor": "#1e1e1e",
    "backgroundColor": "transparent",
@@ -2503,8 +2503,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "raw / clean",
-   "originalText": "raw / clean",
+   "text": "API archive in ·\nraw / clean out",
+   "originalText": "API archive in ·\nraw / clean out",
    "fontSize": 13,
    "fontFamily": 2,
    "textAlign": "center",
