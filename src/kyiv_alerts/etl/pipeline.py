@@ -52,7 +52,7 @@ def extract(
 
     df, source, covered = dataset.official_slice(settings.raw_data_dir, batch), "official", None
     if df is None:
-        keys = lake.list(alerts_in_ua.ARCHIVE_PREFIX + "/")
+        keys = alerts_in_ua.keys_for_batch(lake.list(alerts_in_ua.ARCHIVE_PREFIX + "/"), batch)
         alerts, windows = alerts_in_ua.read_archive((k, lake.get(k)) for k in keys)
         covered = alerts_in_ua.coverage(windows, batch)
         complete = covered == [(batch.start, batch.end)]

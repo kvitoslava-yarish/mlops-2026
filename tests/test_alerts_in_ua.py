@@ -8,6 +8,7 @@ from kyiv_alerts.sources.alerts_in_ua import (
     ARCHIVE_PREFIX,
     OBLAST_UIDS,
     coverage,
+    keys_for_batch,
     read_archive,
     to_raw_rows,
 )
@@ -95,3 +96,16 @@ def test_raion_alerts_keep_their_raion_name():
     assert sorted(raw["raion"]) == ["Броварський район", "Бучанський район"]
     _, counts = clean_batch(raw, batch_for("2026-10"))
     assert counts["rows_duplicate"] == 0  # same times, different raions: not duplicates
+
+
+def test_only_fetches_overlapping_the_month_are_read():
+    keys = [f"{ARCHIVE_PREFIX}/month_ago_{stamp}/14.json" for stamp in (
+        "2026-10-15T003000Z",  # window Sep 15 .. Oct 15: before November
+        "2026-11-01T003000Z",  # window Oct 2 .. Nov 1 00:30: touches November
+        "2026-11-15T003000Z",  # inside
+        "2026-12-01T003000Z",  # window Nov 1 .. Dec 1: inside
+        "2026-12-15T003000Z",  # window Nov 15 .. Dec 15: still overlaps
+        "2027-01-01T003000Z",  # window Dec 2 .. Jan 1: after November
+    )]  # fmt: skip
+    picked = [k.split("month_ago_")[1][:10] for k in keys_for_batch(keys, batch_for("2026-11"))]
+    assert picked == ["2026-11-01", "2026-11-15", "2026-12-01", "2026-12-15"]

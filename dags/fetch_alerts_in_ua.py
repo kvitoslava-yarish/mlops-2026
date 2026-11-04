@@ -32,10 +32,9 @@ def fetch_alerts_in_ua():
         saved = lake.list(folder + "/")
         if len(saved) != len(alerts_in_ua.OBLAST_UIDS):
             raise AirflowFailException(f"{folder}: {len(saved)} of 25 oblasts saved")
-        keys = lake.list(alerts_in_ua.ARCHIVE_PREFIX + "/")
-        _, windows = alerts_in_ua.read_archive((k, lake.get(k)) for k in keys)
+        alerts, windows = alerts_in_ua.read_archive((k, lake.get(k)) for k in saved)
         for lo, hi in windows:
-            print(f"complete fetch covers {lo:%Y-%m-%d %H:%M} .. {hi:%Y-%m-%d %H:%M} UTC")
+            print(f"{len(alerts)} alerts, covering {lo:%Y-%m-%d %H:%M} .. {hi:%Y-%m-%d %H:%M} UTC")
 
     check(fetch())
 
