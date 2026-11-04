@@ -6,7 +6,8 @@ Limits: history endpoints allow 2 requests/min, hence the pause between oblasts.
 """
 
 import time
-from datetime import datetime
+from datetime import UTC, datetime
+from pathlib import Path
 
 import pandas as pd
 import requests
@@ -48,6 +49,38 @@ def fetch_month_ago(token: str, pause_s: float = 31.0, timeout_s: float = 30.0) 
     return alerts
 
 
+def archive_month_ago(
+    token: str, out_root: Path, pause_s: float = 31.0, timeout_s: float = 30.0
+) -> Path:
+    """Save every oblast's ``month_ago`` response, untouched, under one folder per fetch.
+
+    ``month_ago`` only reaches 30 days back, so these files are the only lasting copy of
+    the API history: they are versioned with DVC (``make api-fetch``). Each region is
+    written as soon as it arrives, so an interrupted fetch keeps what it already got.
+    The fetch time names the folder; it is ingestion metadata, never a batch key.
+    """
+    fetched_at = datetime.now(UTC).strftime("%Y-%m-%dT%H%M%SZ")
+    out = out_root / f"month_ago_{fetched_at}"
+    out.mkdir(parents=True, exist_ok=False)
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    for i, uid in enumerate(sorted(OBLAST_UIDS)):
+        if i:
+            time.sleep(pause_s)
+        url = f"{API_URL}/regions/{uid}/alerts/month_ago.json"
+        resp = requests.get(url, headers=headers, timeout=timeout_s)
+        if resp.status_code == 429:
+            time.sleep(60)
+            resp = requests.get(url, headers=headers, timeout=timeout_s)
+        resp.raise_for_status()
+        (out / f"{uid:02d}.json").write_bytes(resp.content)
+        n = len(resp.json().get("alerts", []))
+        print(
+            f"[{i + 1:2d}/{len(OBLAST_UIDS)}] {uid:2d} {OBLAST_UIDS[uid]:24s} {n:5d} alerts",
+            flush=True,
+        )
+    return out
+
+
 def _fmt(value: str | None) -> str:
     if not value:
         return ""
@@ -82,13 +115,18 @@ def to_raw_rows(alerts: list[dict], batch: Batch) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
-    # make api-smoke: one request (Kyiv City), no lake writes.
+    # make api-smoke: one request (Kyiv City), nothing written.
+    # make api-fetch: `--archive DIR` saves all 25 oblasts' month_ago responses.
     import os
+    import sys
     from collections import Counter
 
     token = os.getenv("ALERTS_IN_UA_TOKEN", "")
     if not token:
         raise SystemExit("ALERTS_IN_UA_TOKEN is empty: put the token in .env")
+    if len(sys.argv) == 3 and sys.argv[1] == "--archive":
+        print(f"saved to {archive_month_ago(token, Path(sys.argv[2]))}")
+        raise SystemExit(0)
     resp = requests.get(
         f"{API_URL}/regions/31/alerts/month_ago.json",
         headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
