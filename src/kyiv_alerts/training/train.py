@@ -200,8 +200,8 @@ def run_family(family: str, cfg: dict, tags: dict, args) -> dict:
         run.log_dataset(data["holdout"], f"{family}_holdout", "evaluation", source, label)
         run.log_metrics(results)
         run.log_dict(cfg, "config/train.yaml")
-        for name, points in extras.get("series", {}).items():
-            run.log_series(name, points)
+        for series_name, points in extras.get("series", {}).items():
+            run.log_series(series_name, points)
         for artifact, obj in extras.get("artifacts", {}).items():
             run.log_dict(obj, artifact)
         version = run.log_sklearn_model(
