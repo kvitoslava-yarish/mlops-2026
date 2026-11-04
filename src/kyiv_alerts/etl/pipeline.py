@@ -5,7 +5,6 @@ episodes and features in PostgreSQL. Each step returns a small dict for the next
 """
 
 import io
-import json
 
 import pandas as pd
 
@@ -43,8 +42,9 @@ def extract(
     """Write the batch's raw rows to the lake once; reruns reuse that immutable copy.
 
     Source order: the pinned official file (must cover the whole month), then the
-    alerts.in.ua API if a token is set. The volunteer file is kept for cross-checks
-    only: it is oblast-level and splits alerts differently (README, "Sources").
+    archived alerts.in.ua fetches (``make api-fetch``), which must cover the month
+    unless the gate lists it as an accepted gap. The volunteer file is kept for
+    cross-checks only: it is oblast-level and splits alerts differently.
     """
     lake = Lake(settings)
     if raw_override:
@@ -63,20 +63,28 @@ def extract(
                 return {"source": source, "raw_key": key, "raw_sha256": sha256(data),
                         "rows": rows, "reused": True}  # fmt: skip
 
-    df, source = dataset.official_slice(settings.raw_data_dir, batch), "official"
-    if df is None and settings.alerts_in_ua_token:
-        alerts = alerts_in_ua.fetch_month_ago(settings.alerts_in_ua_token)
-        lake.put(f"raw/alerts/{batch.month}/alerts_in_ua.json", json.dumps(alerts).encode())
-        df, source = alerts_in_ua.to_raw_rows(alerts, batch), "alerts_in_ua"
+    df, source, covered = dataset.official_slice(settings.raw_data_dir, batch), "official", None
     if df is None:
+        alerts, windows = alerts_in_ua.read_archive(settings.api_archive_dir)
+        covered = alerts_in_ua.coverage(windows, batch)
+        complete = covered == [(batch.start, batch.end)]
+        if covered and (
+            complete or quality.ACCEPTED_GAPS.get(batch.month, {}).get("partial_coverage")
+        ):
+            df, source = alerts_in_ua.to_raw_rows(alerts, batch), "alerts_in_ua"
+    if df is None:
+        have = ", ".join(f"{a:%Y-%m-%d %H:%M} .. {b:%Y-%m-%d %H:%M}" for a, b in covered or [])
         raise ValueError(
             f"no source covers {batch.month}: the pinned official file ends 2026-09-07 and "
-            "ALERTS_IN_UA_TOKEN is not set"
+            f"the archived alerts.in.ua fetches cover [{have or 'nothing'}]; run make api-fetch"
         )
     key = raw_key(batch, source)
     data = _csv(df)
-    return {"source": source, "raw_key": key, "raw_sha256": lake.put(key, data),
+    info = {"source": source, "raw_key": key, "raw_sha256": lake.put(key, data),
             "rows": len(df), "reused": False}  # fmt: skip
+    if covered is not None:
+        info["coverage"] = [[str(a), str(b)] for a, b in covered]
+    return info
 
 
 def validate(settings: Settings, batch: Batch, info: dict) -> dict:
@@ -110,6 +118,7 @@ def load(settings: Settings, batch: Batch, info: dict, counts: dict, run_id: str
                     "gate_passed": None,
                     "gate_report": None,
                     "dag_run_id": run_id,
+                    "regime": quality.regime(batch.month),
                 },
             )
     finally:

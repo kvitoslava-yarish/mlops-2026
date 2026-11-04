@@ -187,7 +187,8 @@ run 2: manual__2025-06__20261024T205240  success
 
 - **Official file** (commit `58ee75b`): months 2022-03 … 2026-08, the only pinned source the pipeline uses. Its last two days are missing (no alerts after 2026-08-29 05:00 UTC); accepted, see §3.
 - **Volunteer file** (commit `346bcff`): DVC-tracked for cross-checks only, not a pipeline source. It is oblast-level and splits alerts into ~1.3–1.8× more episodes than the official file, so mixing it in would change what the features mean.
-- **alerts.in.ua** (`ALERTS_IN_UA_TOKEN` in `.env`): 2026-09 onwards. `month_ago` returns only the last 30 days, so a month has to be fetched within 30 days of its end; the JSON is kept in the lake as fetched and reused on rerun. `make api-smoke` checks the token with one request.
+- **alerts.in.ua** (`ALERTS_IN_UA_TOKEN` in `.env`): 2026-10 onwards. `month_ago` only reaches 30 days back, so **`make api-fetch`** saves every oblast's response under DVC (`data/api/alerts_in_ua/month_ago_<fetch time>/`, pushed to MinIO) and `extract` builds a month from the union of all archived fetches (de-duplicated by alert id). Run it at least every 3 weeks, or days are lost. A month the fetches don't fully cover fails `extract` unless `ACCEPTED_GAPS` lists it. `make api-smoke` checks the token with one request.
+- **Two alert levels from autumn 2026:** yellow = drone threat, red = missile / ballistic / massive attack. Both are sirens, so a Kyiv alert is red **or** yellow (same meaning as the history); the level is kept as `alert_level` on every episode. The new system declares about 3× more alerts, so from 2026-10 batches belong to a separate `two_level` regime and are compared only with each other ([design §5.2](docs/design.md#52-data)). 2026-09 has no consistent source; 2026-10 starts on Oct 4.
 - **Live alerts without a token** ([Ubilling Aerial Alerts API](https://wiki.ubilling.net.ua/doku.php?id=aerialalertsapi), `?source=aiu&raw`): the alerts.in.ua active-alerts feed relayed by Ubilling, with exact `started_at`, raion level and red/yellow `alert_level`; limit 2 req/s. Only current alerts, no history, so it does not replace `month_ago` for back-fill; it is the Lab 4 poller's source (backup `source=ual`). The `default` source is not used: its timestamps are `1970-01-01`.
 
 ### Backfill result
@@ -212,6 +213,7 @@ Unpausing the DAG also makes Airflow schedule the latest complete interval (2026
 | clean rows vs median of the last 3 passed batches | within ±50% |
 | duplicate (oblast, start) in the warehouse | 0 |
 | hours between the newest alert and month end | ≤ 48 (2026-08: ≤ 72, accepted gap) |
+| batch size compared only within the same regime (single-level ≤ 2026-09, two-level from 2026-10) | — |
 | Kyiv alerts in the month | ≥ 1 |
 | previous month loaded (feature lookback) | > 0 rows |
 | M1 rows = hours in the month; M2 rows = Kyiv alerts | equal |

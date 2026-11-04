@@ -1,12 +1,15 @@
-"""alerts.in.ua API: finished alerts of the last 30 days, per oblast.
+"""alerts.in.ua API: alerts of the last 30 days, per oblast, with their level.
 
-Used only for months that no pinned file covers. The JSON is stored in the lake
-as fetched, and reruns of the same batch read that copy, never the API again.
-Limits: history endpoints allow 2 requests/min, hence the pause between oblasts.
+``month_ago`` only reaches 30 days back, so ``make api-fetch`` archives each response
+under DVC (data/api/alerts_in_ua/month_ago_<fetch time>/<uid>.json) and the pipeline
+builds months from the union of all archived fetches, never from a live request.
+Levels: yellow = drone threat (30 s siren), red = missile / ballistic / massive attack
+(1 min siren); both are air-raid alerts. Limits: 2 history requests/min.
 """
 
+import json
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -29,24 +32,6 @@ OBLAST_UIDS = {
     26: "Chernivetska oblast", 27: "Lvivska oblast", 28: "Donetska oblast",
     31: KYIV,
 }  # fmt: skip
-
-
-def fetch_month_ago(token: str, pause_s: float = 31.0, timeout_s: float = 30.0) -> list[dict]:
-    """One request per oblast; each alert gets the oblast UID it was requested for."""
-    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-    alerts: list[dict] = []
-    for i, uid in enumerate(sorted(OBLAST_UIDS)):
-        if i:
-            time.sleep(pause_s)
-        url = f"{API_URL}/regions/{uid}/alerts/month_ago.json"
-        resp = requests.get(url, headers=headers, timeout=timeout_s)
-        if resp.status_code == 429:
-            time.sleep(60)
-            resp = requests.get(url, headers=headers, timeout=timeout_s)
-        resp.raise_for_status()
-        for alert in resp.json().get("alerts", []):
-            alerts.append({**alert, "requested_oblast_uid": uid})
-    return alerts
 
 
 def archive_month_ago(
@@ -81,6 +66,47 @@ def archive_month_ago(
     return out
 
 
+WINDOW = timedelta(days=30)  # month_ago reaches about 30 days back from the fetch
+
+
+def _fetch_time(folder: Path) -> datetime:
+    return datetime.strptime(folder.name, "month_ago_%Y-%m-%dT%H%M%SZ").replace(tzinfo=UTC)
+
+
+def read_archive(archive_root: Path) -> tuple[list[dict], list[tuple[datetime, datetime]]]:
+    """All archived alerts, de-duplicated by alert id (latest ``updated_at`` wins, so an alert
+    that was still running in one fetch gets its end from a later one), and the time windows
+    the fetches cover."""
+    by_id: dict[int, dict] = {}
+    windows = []
+    for folder in sorted(archive_root.glob("month_ago_*")):
+        fetched = _fetch_time(folder)
+        windows.append((fetched - WINDOW, fetched))
+        for f in sorted(folder.glob("*.json")):
+            for a in json.loads(f.read_text())["alerts"]:
+                a = {**a, "requested_oblast_uid": int(f.stem)}
+                old = by_id.get(a["id"])
+                if old is None or (a.get("updated_at") or "") >= (old.get("updated_at") or ""):
+                    by_id[a["id"]] = a
+    return list(by_id.values()), windows
+
+
+def coverage(windows: list[tuple[datetime, datetime]], batch: Batch) -> list[tuple]:
+    """The stretches of the batch that archived fetches cover (union of their windows,
+    clipped to the month). A complete month is exactly [(batch.start, batch.end)]."""
+    merged: list[list[datetime]] = []
+    for lo, hi in sorted(windows):
+        if merged and lo <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], hi)
+        else:
+            merged.append([lo, hi])
+    return [
+        (max(lo, batch.start), min(hi, batch.end))
+        for lo, hi in merged
+        if lo < batch.end and hi > batch.start
+    ]
+
+
 def _fmt(value: str | None) -> str:
     if not value:
         return ""
@@ -105,11 +131,12 @@ def to_raw_rows(alerts: list[dict], batch: Batch) -> pd.DataFrame:
             "finished_at": _fmt(a.get("finished_at")),
             "source": "alerts_in_ua",
             "naive": str(bool(a.get("calculated"))),
+            "alert_level": a.get("alert_level") or "",
         }
         for a in alerts
         if a.get("alert_type", "air_raid") == "air_raid"
     ]
-    df = pd.DataFrame(rows, columns=RAW_COLUMNS)
+    df = pd.DataFrame(rows, columns=[*RAW_COLUMNS, "alert_level"])
     start, end = (b.strftime("%Y-%m-%d %H:%M:%S+00:00") for b in (batch.start, batch.end))
     return df[(df["started_at"] >= start) & (df["started_at"] < end)].reset_index(drop=True)
 

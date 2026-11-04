@@ -8,7 +8,9 @@ Rules, in order, each counted in the batch audit:
    touching intervals of the same oblast become one episode (an oblast is
    "under alert" while any part of it is).
 Guessed ends (volunteer ``naive=True``, alerts.in.ua ``calculated``) are kept for
-the start time but flagged, so duration labels can exclude them.
+the start time but flagged, so duration labels can exclude them. An episode's
+``alert_level`` is the highest level of its records (red > yellow > "" before the
+two-level system).
 """
 
 import numpy as np
@@ -24,8 +26,11 @@ CLEAN_COLUMNS = [
     "duration_min",
     "n_records",
     "end_is_guess",
+    "alert_level",
     "source",
 ]
+LEVEL_RANK = {"": 0, "yellow": 1, "red": 2}
+RANK_LEVEL = {v: k for k, v in LEVEL_RANK.items()}
 
 
 def _merge_intervals(group: pd.DataFrame) -> pd.DataFrame:
@@ -33,19 +38,29 @@ def _merge_intervals(group: pd.DataFrame) -> pd.DataFrame:
     starts = group["started_at"].to_numpy()
     ends = group["finished_at"].to_numpy()
     guesses = group["naive"].to_numpy()
+    levels = group["level_rank"].to_numpy()
     # A new episode starts where the start is after the running maximum of earlier ends.
     running_end = np.maximum.accumulate(ends)
     new_episode = np.ones(len(group), dtype=bool)
     new_episode[1:] = starts[1:] > running_end[:-1]
     episode = np.cumsum(new_episode)
     return (
-        pd.DataFrame({"episode": episode, "started_at": starts, "finished_at": ends, "g": guesses})
+        pd.DataFrame(
+            {
+                "episode": episode,
+                "started_at": starts,
+                "finished_at": ends,
+                "g": guesses,
+                "level_rank": levels,
+            }
+        )  # fmt: skip
         .groupby("episode")
         .agg(
             started_at=("started_at", "min"),
             finished_at=("finished_at", "max"),
             n_records=("started_at", "size"),
             end_is_guess=("g", "any"),
+            level_rank=("level_rank", "max"),
         )
     )
 
@@ -63,6 +78,8 @@ def clean_batch(raw: pd.DataFrame, batch: Batch) -> tuple[pd.DataFrame, dict]:
     df["started_at"] = pd.to_datetime(df["started_at"], utc=True)
     df["finished_at"] = pd.to_datetime(df["finished_at"], utc=True)
     df["naive"] = df["naive"].str.lower() == "true"
+    levels = df["alert_level"] if "alert_level" in df else pd.Series("", index=df.index)
+    df["level_rank"] = levels.fillna("").map(LEVEL_RANK).fillna(0).astype(int)
     bad_time = df["finished_at"] <= df["started_at"]
     counts["rows_bad_time"] = int(bad_time.sum())
     df = df.loc[~bad_time]
@@ -72,12 +89,13 @@ def clean_batch(raw: pd.DataFrame, batch: Batch) -> tuple[pd.DataFrame, dict]:
         episodes = pd.DataFrame(columns=CLEAN_COLUMNS)
     else:
         episodes = (
-            df.groupby("oblast", sort=True)[["started_at", "finished_at", "naive"]]
+            df.groupby("oblast", sort=True)[["started_at", "finished_at", "naive", "level_rank"]]
             .apply(_merge_intervals)
             .reset_index()
             .drop(columns="episode")
         )
         episodes["batch_month"] = batch.month
+        episodes["alert_level"] = episodes.pop("level_rank").map(RANK_LEVEL)
         episodes["duration_min"] = (
             (episodes["finished_at"] - episodes["started_at"]).dt.total_seconds() / 60
         ).round(2)

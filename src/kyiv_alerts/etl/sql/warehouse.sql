@@ -11,9 +11,11 @@ CREATE TABLE IF NOT EXISTS dwh.alerts (
     duration_min  double precision NOT NULL,
     n_records     integer          NOT NULL,
     end_is_guess  boolean          NOT NULL,
+    alert_level   text             NOT NULL DEFAULT '',  -- '', yellow (drones), red (missiles)
     source        text             NOT NULL,
     PRIMARY KEY (oblast, started_at)
 );
+ALTER TABLE dwh.alerts ADD COLUMN IF NOT EXISTS alert_level text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS alerts_batch_month_idx ON dwh.alerts (batch_month);
 CREATE INDEX IF NOT EXISTS alerts_started_at_idx ON dwh.alerts (started_at);
 
@@ -36,8 +38,10 @@ CREATE TABLE IF NOT EXISTS dwh.batch_audit (
     gate_passed     boolean,
     gate_report     jsonb,
     dag_run_id      text,
+    regime          text,
     updated_at      timestamptz NOT NULL DEFAULT now()  -- audit metadata only, never a batch key
 );
+ALTER TABLE dwh.batch_audit ADD COLUMN IF NOT EXISTS regime text;
 
 -- Feature layer. Labels sit next to features for training; serving ignores them.
 CREATE TABLE IF NOT EXISTS features.m1_hourly (
