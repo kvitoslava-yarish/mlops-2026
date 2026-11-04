@@ -215,7 +215,7 @@ Baseline window summary (2025–26): P(at least one start) = 0.46 for 22–04, 0
 |---|---|---|---|
 | M1 | start rate by hour of day (from the training period) | same-hour start rate over the last 30 days (feature `kyiv_rate_same_hour_30d`) | `HistGradientBoostingClassifier` on the 10 features below |
 | M2 | — | last-12-months P50 / P90 of duration (before the hold-out) | two `HistGradientBoostingRegressor(loss="quantile")`, q = 0.5 / 0.9, P90 ≥ P50 enforced, with monotonic constraints (v3) — longer with more neighbours under alert (`neighbours_under_alert_at_start` +1), shorter with more simultaneous starts (`oblasts_started_prev_5m` −1) — to keep 1.4k training alerts from fitting noise. scikit-learn re-estimates quantile leaf values after each tree, which can break `monotonic_cst`, so `QuantilePair.predict` also projects the output onto monotone functions (mean of the upper and lower monotone envelopes over the training grid) |
-| M3 | most common type / last month's mix | type by hour of day | Lab 3 (needs Telegram labels) |
+| M3 | most common type / last month's mix | type by hour of day | alert level as label from 2026-10 (yellow = drones, red = missiles / ballistic), Telegram detail in Lab 3 |
 
 scikit-learn only: no LightGBM / XGBoost, which need `libomp` from Homebrew on macOS. Hold-out results: 7.2.
 
@@ -312,7 +312,7 @@ flowchart TB
     subgraph SRC["Sources"]
         off["official_data_en.csv<br/>commit 58ee75b"]
         vol["volunteer_data_en.csv<br/>commit 346bcff (cross-checks only)"]
-        api["alerts.in.ua month_ago<br/>(token; months no file covers)"]
+        api["alerts.in.ua month_ago<br/>(token; 2026-10 onwards)"]
     end
     dvcraw[("version point: data/raw.dvc<br/>DVC remote = MinIO bucket dvc")]
     subgraph DAG["Airflow 3.3.1 DAG alerts_etl · batch = one month = data interval"]
@@ -334,7 +334,10 @@ flowchart TB
     off --> dvcraw
     vol --> dvcraw
     dvcraw -- "dvc pull; mounted read-only" --> ex
-    api -.-> ex
+    fetch["DAG fetch_alerts_in_ua<br/>1st + 15th, 00:30 UTC"]
+    lakeapi[("MinIO lake<br/>raw/alerts_in_ua/month_ago_fetch-time/")]
+    api --> fetch --> lakeapi
+    lakeapi -- "union of fetches" --> ex
     ex --> lakeraw
     tr --> lakeclean
     lo -- "DELETE + INSERT the month" --> dwh
@@ -518,7 +521,7 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 | Party | Contract |
 |---|---|
 | Vadimkin dataset (upstream) | no SLA; files pinned by commit (`58ee75b` official, `346bcff` volunteer) and by DVC hash; columns `oblast, raion, hromada, level, started_at, finished_at, source` (official) / `region, started_at, finished_at, naive` (volunteer), UTC. A schema change fails `validate`; a stale or coarser file fails `quality_check` |
-| alerts.in.ua (upstream) | token; ≤ 8 req/min (hard limit 12), history 2/min → 25 oblasts take ~13 min; `month_ago` covers only the last 30 days, so a month must be fetched within 30 days of its end; responses kept as fetched and replayed on rerun |
+| alerts.in.ua (upstream) | token; ≤ 8 req/min (hard limit 12), history 2/min → 25 oblasts take ~13 min; `month_ago` covers only the last 30 days, so the DAG `fetch_alerts_in_ua` runs on the 1st and 15th (gaps ≤ 17 days) and keeps every response as fetched; a month is built from the union of fetches (latest version of each alert id wins). Raion-level alerts name the raion in `location_title` (`location_raion` is empty) |
 | Ubilling live feed (upstream, Lab 4) | unofficial, no SLA or terms; ≤ 2 req/s; `source` pinned to `aiu` (the unnamed `default` can switch provider); `cachedat` checked; schema change → quality gate fails |
 | Air Force Telegram (upstream) | no contract; Lab 3 |
 | Feature tables (internal) | `features.m1_hourly`, `features.m2_alert`, keyed by time + `feature_version`; a new version is added alongside, never overwrites; training reads the DVC snapshot, serving (Lab 4) the same tables |
@@ -588,7 +591,7 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 
 ### 7.4 Milestones
 
-- **Lab 2 (done):** DVC-versioned raw data on MinIO; `alerts_etl` monthly DAG with idempotent loads and a quality gate; feature tables with `feature_version`; M1 and M2 rule baselines vs GBMs on a time split; MLflow with lineage tags, registry and `champion` alias; one-command reproduction; Feast point-in-time demo.
+- **Lab 2 (done):** DVC-versioned raw data on MinIO; `alerts_etl` monthly DAG with idempotent loads and a quality gate; feature tables with `feature_version`; M1 and M2 rule baselines vs GBMs on a time split; MLflow with lineage tags, registry and `champion` alias; one-command reproduction; Feast point-in-time demo; M1 6-h forecast with monthly refits and per-lead metrics; M2 monotonic constraints; alerts.in.ua history archived by a DAG; two-level (red/yellow) alert regime from 2026-10.
 - **Lab 3:** Telegram ingestion (back-fill from 2024-01), threat-type parser, M3 and the Telegram features for M1/M2; LLM answers "what is the current threat to Kyiv and why this forecast", retrieving Air Force posts from pgvector; evaluated on a fixed question set.
 - **Lab 4:** API + poller on Minikube with probes; forecast DAG; Evidently / Prometheus / Grafana; replayed drifts (raion switch, 2025 long nights, source switch) reach on-call.
 - **Lab 5:** agent with tools (active alerts, forecast, duration, post search); traced, ten-task evaluation.
