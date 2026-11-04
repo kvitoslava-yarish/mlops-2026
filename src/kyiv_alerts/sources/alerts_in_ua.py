@@ -119,7 +119,10 @@ def to_raw_rows(alerts: list[dict], batch: Batch) -> pd.DataFrame:
     rows = [
         {
             "oblast": OBLAST_UIDS[a["requested_oblast_uid"]],
-            "raion": a.get("location_raion") or "",
+            # a raion-level alert names itself in location_title; location_raion is empty
+            "raion": a.get("location_raion")
+            or (a.get("location_title") if _level(a) == "raion" else "")
+            or "",
             "hromada": a.get("location_title") if _level(a) == "hromada" else "",
             "level": _level(a),
             "started_at": _fmt(a.get("started_at")),

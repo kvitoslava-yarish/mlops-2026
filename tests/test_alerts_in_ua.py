@@ -83,3 +83,15 @@ def test_history_without_levels_still_cleans(make_raw):
 
 def test_regime_boundary():
     assert regime("2026-09") == "single_level" and regime("2026-10") == "two_level"
+
+
+def test_raion_alerts_keep_their_raion_name():
+    def raion_alert(id_, title):
+        base = alert(id_, "2026-10-10T20:00:00Z", "2026-10-10T20:40:00Z")
+        return {**base, "location_title": title, "location_raion": None, "requested_oblast_uid": 14}
+
+    raw = to_raw_rows([raion_alert(1, "Бучанський район"), raion_alert(2, "Броварський район")],
+                      batch_for("2026-10"))  # fmt: skip
+    assert sorted(raw["raion"]) == ["Броварський район", "Бучанський район"]
+    _, counts = clean_batch(raw, batch_for("2026-10"))
+    assert counts["rows_duplicate"] == 0  # same times, different raions: not duplicates

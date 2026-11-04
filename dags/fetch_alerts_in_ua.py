@@ -9,8 +9,6 @@ from kyiv_alerts.sources import alerts_in_ua
 from kyiv_alerts.storage import Lake
 
 
-# month_ago reaches 30 days back: the 1st and the 15th keep every gap under 17 days, and the
-# fetch on the 1st lands before alerts_etl (03:00) builds the month that just ended.
 @dag(
     dag_id="fetch_alerts_in_ua",
     schedule=CronTriggerTimetable("30 0 1,15 * *", timezone="UTC"),
