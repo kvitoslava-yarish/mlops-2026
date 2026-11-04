@@ -1,4 +1,4 @@
-seed: 42
+seed: 67
 split:
   train_start: "2023-01-01"
   train_end: "2026-02-28"        # M2: single split; M1 refits monthly (below)

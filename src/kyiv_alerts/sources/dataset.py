@@ -52,4 +52,3 @@ def official_slice(raw_dir: Path, batch: Batch) -> pd.DataFrame | None:
     df = _read(raw_dir / OFFICIAL_FILE)
     df["naive"] = "False"
     return _slice(df[RAW_COLUMNS], batch)
-

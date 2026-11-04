@@ -96,9 +96,14 @@ def train_m1(cfg: dict) -> tuple:
         for name in ("trivial", "rule", "model"):
             s = metrics.m1_scores(part[M1_LABEL].to_numpy(), part[f"p_{name}"].to_numpy())
             row |= {f"brier_{name}": s["brier"], f"auc_{name}": s["auc"]}
-            results[f"holdout_brier_{name}_lead{lead}"] = s["brier"]
-            results[f"holdout_auc_{name}_lead{lead}"] = s["auc"]
         by_lead.append(row)
+    # Per lead hour as one metric with step = lead (a line chart in MLflow), for the model
+    # and the hour-of-day baseline it has to beat; the full table is metrics_by_lead.json.
+    series = {
+        f"holdout_{metric}_{name}_by_lead": {r["lead"]: r[f"{metric}_{name}"] for r in by_lead}
+        for metric in ("brier", "auc")
+        for name in ("trivial", "model")
+    }
 
     # The registered model is the latest monthly refit: all history up to holdout_end.
     final_train = df[(t >= _ts(split["train_start"])) & (t < _ts(split["holdout_end"]) + ONE_DAY)]
@@ -113,7 +118,7 @@ def train_m1(cfg: dict) -> tuple:
         "train": final_train[[*M1_FEATURES, M1_LABEL]],
         "holdout": hold[[*M1_FEATURES, M1_LABEL]],
     }
-    extras = {"metrics_by_lead.json": by_lead}
+    extras = {"artifacts": {"metrics_by_lead.json": by_lead}, "series": series}
     return model, results, final_train[M1_FEATURES].head(5).astype("float64"), data, extras
 
 
@@ -195,7 +200,9 @@ def run_family(family: str, cfg: dict, tags: dict, args) -> dict:
         run.log_dataset(data["holdout"], f"{family}_holdout", "evaluation", source, label)
         run.log_metrics(results)
         run.log_dict(cfg, "config/train.yaml")
-        for artifact, obj in extras.items():
+        for series_name, points in extras.get("series", {}).items():
+            run.log_series(series_name, points)
+        for artifact, obj in extras.get("artifacts", {}).items():
             run.log_dict(obj, artifact)
         version = run.log_sklearn_model(
             model,

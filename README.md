@@ -2,7 +2,9 @@
 
 Course project for KSE "Introduction to MLOps and ML System Design" (2026). The full design is in [docs/design.md](docs/design.md).
 
-**Status:** Lab 2. Raw data versioned with DVC on MinIO, a monthly Airflow ETL with a quality gate, feature tables, rule baselines vs trained models on a time split, MLflow tracking and registry with lineage, one-command reproduction, and an optional Feast demo. Runs locally with Docker Compose; built and tested on Apple Silicon.
+**Status:** Lab 2. Raw data versioned with DVC on MinIO, a monthly Airflow ETL with a quality gate, an Airflow DAG that archives the alerts.in.ua history twice a month, feature tables (v3), rule baselines vs trained models on a time split, MLflow tracking and registry with lineage, one-command reproduction, and an optional Feast demo. History runs 2022-03 … 2026-08 (official file) plus 2026-10 from the API, the first month of the red/yellow alert system. Runs locally with Docker Compose; built and tested on Apple Silicon.
+
+**Not built yet:** the live poller, the `forecast_6h` DAG and the API (Lab 4), Telegram ingestion and M3 (Lab 3). The full picture, built and planned, with every schedule: [docs/diagrams/kyiv_alerts_system.excalidraw](docs/diagrams/kyiv_alerts_system.excalidraw) (open in excalidraw.com or the VS Code Excalidraw extension).
 
 ## Problem
 
@@ -18,7 +20,7 @@ Predictions are served by a REST API for planning only; the official alert alway
 |---|---|---|---|---|
 | **M1** start risk | In which of the next 6 hours is a Kyiv alert likely to **start**? | 04:00, 10:00, 16:00, 22:00, each for the next 6 hours | one probability per hour | at the end of each hour |
 | **M2** duration | This alert just started: when will it end? | the moment a Kyiv alert starts | **P50** "typically ends by" and **P90** "almost surely ends by" | when the alert ends |
-| **M3** threat type | If an alert starts in that hour, what is it likely to be? | together with M1 | per hour: probability of drones, cruise missiles, ballistic | when an Air Force post names the type (Lab 3) |
+| **M3** threat type | If an alert starts in that hour, what is it likely to be? | together with M1 | per hour: probability of drones vs missiles / ballistic | when the alert starts: its level (yellow = drones, red = missiles / ballistic), recorded since 2026-10; Air Force posts add detail in Lab 3 |
 
 Lab 2 builds M1 and M2 from alert data. M3 and the Telegram features need the Air Force posts, which arrive in Lab 3 together with the retrieval corpus.
 
@@ -59,7 +61,9 @@ For P50 this is half the absolute error in minutes. For P90 = 240 min: an alert 
 ```mermaid
 flowchart LR
     gh["Vadimkin dataset<br/>(pinned commits)"] -- "make data / data-seed" --> dvc[("DVC remote<br/>MinIO bucket dvc")]
-    dvc --> dag["Airflow DAG alerts_etl<br/>extract → validate → transform →<br/>load → build_features → quality_check"]
+    aiu["alerts.in.ua month_ago"] -- "DAG fetch_alerts_in_ua<br/>1st + 15th" --> lake[("MinIO lake<br/>raw/alerts_in_ua/")]
+    dvc --> dag["Airflow DAG alerts_etl (1st, 03:00 UTC)<br/>extract → validate → transform →<br/>load → build_features → quality_check"]
+    lake --> dag
     dag -- "one month per run,<br/>delete + insert" --> pg[("PostgreSQL warehouse<br/>dwh.alerts · features.*")]
     pg -- "make snapshot" --> snap[("data/features.dvc")]
     snap -- "make train" --> mlf["MLflow server<br/>runs + registry (champion)"]
@@ -77,6 +81,7 @@ make setup     # Python 3.12 env from uv.lock (includes DVC 3.67.1 with dvc-s3 3
 make up        # copies .env.example to .env, builds and starts the stack, waits until healthy
 make data      # dvc pull of the raw data + checksums  (on a new machine: make data-seed first)
 make backfill  # alerts_etl for every month 2022-03 … 2026-08, oldest first (~7 min)
+               # 2026-10+: unpause fetch_alerts_in_ua (needs ALERTS_IN_UA_TOKEN in .env), then make run MONTH=2026-10
 make snapshot  # export passed batches to data/features, dvc add + push
 git add data/features.dvc && git commit -m "feature snapshot"
 make train     # M1 + M2: baselines vs models, logged and registered in MLflow
@@ -106,7 +111,7 @@ Every target in the [Makefile](Makefile) has a one-line comment. `make down` sto
 |---|---|
 | Tool | DVC 3.67.1 + dvc-s3 3.3.0 |
 | Remote | S3-compatible MinIO (`pgsty/silo`) in Docker Compose, bucket `dvc`: `s3://dvc`, endpoint `http://localhost:9000` ([.dvc/config](.dvc/config), committed). Credentials come from `.env` via the Makefile, never from git |
-| Tracked | `data/raw/` → [data/raw.dvc](data/raw.dvc) (hash `352f88a87031f9e22af2cce021c2a4a7.dir`); training snapshot `data/features/` → `data/features.dvc` |
+| Tracked | `data/raw/` → [data/raw.dvc](data/raw.dvc) (hash `352f88a87031f9e22af2cce021c2a4a7.dir`); training snapshot `data/features/` → `data/features.dvc`; the first alerts.in.ua fetch `data/api/` → `data/api.dvc` (backup; later fetches are immutable folders in the MinIO lake, written by the DAG `fetch_alerts_in_ua`) |
 | Size | 40 MB in total, below the 200 MB limit, so **no sampling**: the files are the complete upstream files |
 
 **Retrieve the data on a clean clone:**
@@ -138,7 +143,7 @@ e705cfc6d7054b8b09999be31c7c423c    31025633  data/raw/official_data_en.csv
 | `build_features` | M1 and M2 feature rows for the month, as of issue time / alert start, using a 60-day lookback | `features.m1_hourly`, `features.m2_alert` |
 | `quality_check` | the gate (§3 below) | `dwh.batch_audit.gate_passed` |
 
-**The batch is the data interval, never the clock.** I chose the explicit timetable: `schedule=CronDataIntervalTimetable("@monthly", timezone="UTC")`, so each run has a real interval `[month start, next month start)` and the batch is the month of `data_interval_start`. A manual run can name the month with the `batch_month` param instead (`make run MONTH=2025-06` passes `{"batch_month": "2025-06"}`). No task reads `datetime.now()`.
+**The batch is the data interval, never the clock.** I chose the explicit timetable: `schedule=CronDataIntervalTimetable("0 3 1 * *", timezone="UTC")`, so each run has a real interval `[1st 03:00, next 1st 03:00)` and the batch is the month of `data_interval_start`. It runs at 03:00 rather than midnight so the alerts.in.ua fetch of the 1st (00:30, below) has already saved the month that just ended. A manual run can name the month with the `batch_month` param instead (`make run MONTH=2025-06` passes `{"batch_month": "2025-06"}`). No task reads `datetime.now()`.
 
 ```bash
 make run MONTH=2025-06            # one month, waits for the result
@@ -146,7 +151,7 @@ make row-counts MONTH=2025-06     # rows for that month in each table + min/max 
 make backfill FROM=2022-03 TO=2026-08
 ```
 
-Triggering by logical date also works, with one Airflow subtlety: a *manual* run gets the interval that **ends** at its logical date, so `airflow dags trigger alerts_etl --logical-date 2025-07-01T00:00:00+00:00` processes June 2025 (scheduled and backfill runs are named by the interval start, e.g. `backfill__2025-07-01…` = logical date 2025-06-01 = June). The `batch_month` param avoids the ambiguity; in the UI use *Trigger* → *batch_month*.
+Triggering by logical date also works, with one Airflow subtlety: a *manual* run gets the interval that **ends** at its logical date, so `airflow dags trigger alerts_etl --logical-date 2025-07-01T03:00:00+00:00` processes June 2025 (scheduled and backfill runs are named by the interval end, e.g. `backfill__2025-07-01T03:00…` = logical date 2025-06-01T03:00 = June). The `batch_month` param avoids the ambiguity; in the UI use *Trigger* → *batch_month*.
 
 **Only that interval:** after `make run MONTH=2025-06`, every row of the month has `started_at` between `2025-06-01` and `2025-06-30`:
 
@@ -187,7 +192,8 @@ run 2: manual__2025-06__20261024T205240  success
 
 - **Official file** (commit `58ee75b`): months 2022-03 … 2026-08, the only pinned source the pipeline uses. Its last two days are missing (no alerts after 2026-08-29 05:00 UTC); accepted, see §3.
 - **Volunteer file** (commit `346bcff`): DVC-tracked for cross-checks only, not a pipeline source. It is oblast-level and splits alerts into ~1.3–1.8× more episodes than the official file, so mixing it in would change what the features mean.
-- **alerts.in.ua** (`ALERTS_IN_UA_TOKEN` in `.env`): 2026-09 onwards. `month_ago` returns only the last 30 days, so a month has to be fetched within 30 days of its end; the JSON is kept in the lake as fetched and reused on rerun. `make api-smoke` checks the token with one request.
+- **alerts.in.ua** (`ALERTS_IN_UA_TOKEN` in `.env`): 2026-10 onwards. `month_ago` only reaches 30 days back, so the Airflow DAG **`fetch_alerts_in_ua`** ([dags/fetch_alerts_in_ua.py](dags/fetch_alerts_in_ua.py)) saves every oblast's response, as returned, on the **1st and 15th at 00:30 UTC** (gaps ≤ 17 days). Each fetch is an immutable folder in the lake, `lake/raw/alerts_in_ua/month_ago_<fetch time>/<uid>.json`; a `check` task fails the run unless all 25 oblasts were saved. `extract` builds a month from the union of all fetches (de-duplicated by alert id, latest update wins); only complete fetches count as coverage, and a month they don't fully cover fails `extract` unless `ACCEPTED_GAPS` lists it. For an extra fetch, trigger the DAG in the UI. `make api-smoke` checks the token with one request. (The first fetch, 2026-11-04, is also kept under DVC in `data/api.dvc`.)
+- **Two alert levels from autumn 2026:** yellow = drone threat, red = missile / ballistic / massive attack. Both are sirens, so a Kyiv alert is red **or** yellow (same meaning as the history); the level is kept as `alert_level` on every episode. The new system declares about 3× more alerts, so from 2026-10 batches belong to a separate `two_level` regime and are compared only with each other ([design §5.2](docs/design.md#52-data)). 2026-09 has no consistent source; 2026-10 starts on Oct 4.
 - **Live alerts without a token** ([Ubilling Aerial Alerts API](https://wiki.ubilling.net.ua/doku.php?id=aerialalertsapi), `?source=aiu&raw`): the alerts.in.ua active-alerts feed relayed by Ubilling, with exact `started_at`, raion level and red/yellow `alert_level`; limit 2 req/s. Only current alerts, no history, so it does not replace `month_ago` for back-fill; it is the Lab 4 poller's source (backup `source=ual`). The `default` source is not used: its timestamps are `1970-01-01`.
 
 ### Backfill result
@@ -212,6 +218,7 @@ Unpausing the DAG also makes Airflow schedule the latest complete interval (2026
 | clean rows vs median of the last 3 passed batches | within ±50% |
 | duplicate (oblast, start) in the warehouse | 0 |
 | hours between the newest alert and month end | ≤ 48 (2026-08: ≤ 72, accepted gap) |
+| batch size compared only within the same regime (single-level ≤ 2026-09, two-level from 2026-10) | — |
 | Kyiv alerts in the month | ≥ 1 |
 | previous month loaded (feature lookback) | > 0 rows |
 | M1 rows = hours in the month; M2 rows = Kyiv alerts | equal |
@@ -276,7 +283,9 @@ Hold-out 2026-03-01 … 2026-08-28 (the official file stops on 2026-08-29); trai
 - **M1 is evaluated the way it will run: retrained monthly.** Each of the 6 hold-out months is predicted by a model fit on all data from 2023-01 up to the start of that month. The registered model is the latest refit (all data up to 2026-08-28).
 - **M2** uses one split: train 2023-01-01 … 2026-02-28.
 
-Data version `data_version = 3e7de26af5034174fa82e86bb10110d9.dir` (feature_version v3, batches 2022-03 … 2026-08). Registered as `kyiv-m1-start-risk` v5 and `kyiv-m2-duration` v5 (alias `champion`) from commit `4134e18`.
+These are the registered champions, trained at commit `52cc28c` with `seed: 42`. `configs/train.yaml` now uses `seed: 67`, so a fresh `make train` gives slightly different numbers; `make reproduce` still matches exactly, because it checks out the champion's own commit.
+
+Data version `data_version = 3e7de26af5034174fa82e86bb10110d9.dir` (feature_version v3, batches 2022-03 … 2026-08). Registered as `kyiv-m1-start-risk` v6 and `kyiv-m2-duration` v7 (alias `champion`) from commit `52cc28c`.
 
 **M1 — start risk, 6-hour forecast issued at 04 / 10 / 16 / 22.** 4,344 hold-out hours, an alert started in 7.3% of them.
 
@@ -314,14 +323,14 @@ MLflow 3.16.1 at http://localhost:5001: backend store PostgreSQL (database `mlfl
 Every write to MLflow goes through one class, [`TrackedRun`](src/kyiv_alerts/training/tracking.py). It refuses to start a run without `data_version` and `git_commit`, records every param, metric, tag, dataset, artifact and model it writes, marks a crashed run `FAILED`, and ends each run by logging that record as **`logging_manifest.json`** and printing a one-line summary:
 
 ```
-[mlflow] kyiv-m1-start-risk / m1-4134e18 (9f0505cc…) FINISHED: 6 tags · 14 params · 58 metrics · 2 datasets · 3 artifacts · model HistGradientBoostingClassifier · kyiv-m1-start-risk v5 @champion
+[mlflow] kyiv-m1-start-risk / m1-52cc28c (b2a2d588…) FINISHED: 6 tags · 14 params · 26 metrics (4 by step) · 2 datasets · 3 artifacts · model HistGradientBoostingClassifier · kyiv-m1-start-risk v6 @champion
 ```
 
 Every `make train` run logs:
 
 - **params:** split dates, seed, hyperparameters, feature list ([configs/train.yaml](configs/train.yaml));
 - **datasets:** the train and hold-out frames as MLflow datasets (schema, rows, source file, digest = DVC hash), in the run's *Datasets* panel;
-- **metrics:** every baseline and the model side by side (`holdout_<metric>_<trivial|rule|model>`), for M1 also per lead hour (`holdout_brier_model_lead3`, …);
+- **metrics:** every baseline and the model side by side (`holdout_<metric>_<trivial|rule|model>`). For M1 the per-lead scores are one metric each with **step = lead hour** (`holdout_{brier,auc}_{model,trivial}_by_lead`), so MLflow draws them as a line chart over leads 0–5; the full table, including the 30-day rule, is in `metrics_by_lead.json`;
 - **artifacts:** `config/train.yaml`, `logging_manifest.json`, `metrics_by_lead.json` (M1), the model;
 - **tags:** `data_version` (DVC hash of `data/features`), `raw_data_version` (DVC hash of `data/raw`), `git_commit`, `git_dirty`, `feature_version`.
 
@@ -342,26 +351,27 @@ make reproduce MODEL=kyiv-m2-duration ALIAS=champion
 
 ```
 $ make reproduce MODEL=kyiv-m1-start-risk ALIAS=champion
-kyiv-m1-start-risk v5: run 9f0505cc9f574b529ace4171641f329a, commit 4134e18e3359597d22b324c915f06f3e8ea1126f, data 3e7de26af5034174fa82e86bb10110d9.dir
-$ git worktree add --detach /var/folders/.../kyiv-repro-…/repo 4134e18e3359597d22b324c915f06f3e8ea1126f
+kyiv-m1-start-risk v6: run b2a2d588c3154161844fa4ddacc6761d, commit 52cc28c80668e34b1478661645482e8ed17caf7d, data 3e7de26af5034174fa82e86bb10110d9.dir
+$ git worktree add --detach /var/folders/.../kyiv-repro-…/repo 52cc28c80668e34b1478661645482e8ed17caf7d
 $ dvc pull data/features.dvc
 3 files fetched and 2 files added
-$ uv run --frozen python -m kyiv_alerts.training.train --model m1 --no-register --reproduces 9f0505cc9f574b529ace4171641f329a ...
+$ uv run --frozen python -m kyiv_alerts.training.train --model m1 --no-register --reproduces b2a2d588c3154161844fa4ddacc6761d ...
 $ git worktree remove --force /var/folders/.../kyiv-repro-…/repo
 holdout_brier_model: registered 0.066545, reproduced 0.066545, |diff| 0.00e+00 (tolerance 0.0001) -> PASS
-reproduction run: 19d6aedad31a444eb03bf9a201de6f25
+reproduction run: 99b943e6b3714d44a4d9a34d23d47b5e
 
 $ make reproduce MODEL=kyiv-m2-duration ALIAS=champion
-kyiv-m2-duration v5: run c12cafb763094127a2622297e7db66e2, commit 4134e18e3359597d22b324c915f06f3e8ea1126f, data 3e7de26af5034174fa82e86bb10110d9.dir
+kyiv-m2-duration v7: run 0bf3cf4a633241dd9e6e0fa99f91a143, commit 52cc28c80668e34b1478661645482e8ed17caf7d, data 3e7de26af5034174fa82e86bb10110d9.dir
 ...
 holdout_pinball_90_model: registered 14.720239, reproduced 14.720239, |diff| 0.00e+00 (tolerance 0.1) -> PASS
-reproduction run: 8a6e482c6760405c8b69b66fb0487df8
+reproduction run: bc45cadd2efc4f3cbbcfee4ec0da70f1
 ```
 
 ## Repository
 
 ```
-dags/alerts_etl.py                 Airflow DAG (thin wrapper over kyiv_alerts.etl.pipeline)
+dags/alerts_etl.py                 Airflow DAG, monthly batch (thin wrapper over kyiv_alerts.etl.pipeline)
+dags/fetch_alerts_in_ua.py         Airflow DAG, archives the alerts.in.ua history on the 1st and 15th
 src/kyiv_alerts/
   config.py, batch.py, storage.py  shared basics: settings, the monthly batch, MinIO access
   sources/                         upstream alert sources (pinned dataset, alerts.in.ua)
@@ -373,8 +383,10 @@ configs/train.yaml                 split dates and hyperparameters
 feature_repo/                      Feast offline demo (optional)
 scripts/                           seeding, bad batch, Airflow run / backfill helpers
 docker/, docker-compose.yml        local stack (Airflow, MLflow images, Postgres init)
-data/raw.dvc, data/features.dvc    data versions (contents live in the DVC remote)
+data/raw.dvc, data/features.dvc,   data versions (contents live in the DVC remote)
+  data/api.dvc
 docs/design.md                     design document
+docs/diagrams/                     system diagram (Excalidraw): sources, jobs, models, schedules
 tests/                             unit tests (no Docker needed): make test
 ```
 

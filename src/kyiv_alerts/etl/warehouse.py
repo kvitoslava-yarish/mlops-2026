@@ -1,5 +1,3 @@
-"""load: PostgreSQL warehouse access. Every write replaces exactly one batch."""
-
 import json
 from datetime import datetime
 from importlib import resources
@@ -11,7 +9,7 @@ from psycopg2.extras import Json, execute_values
 AUDIT_FIELDS = (
     "source", "raw_key", "raw_sha256", "rows_raw", "rows_duplicate", "rows_unfinished",
     "rows_bad_time", "rows_valid", "rows_merged", "rows_clean", "invalid_share",
-    "m1_rows", "m2_rows", "gate_passed", "gate_report", "dag_run_id",
+    "m1_rows", "m2_rows", "gate_passed", "gate_report", "dag_run_id", "regime",
 )  # fmt: skip
 
 

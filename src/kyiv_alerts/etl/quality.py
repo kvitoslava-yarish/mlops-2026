@@ -16,10 +16,28 @@ FIRST_BATCH = "2022-03"
 MAX_INVALID_SHARE = 0.01
 MAX_SIZE_DEVIATION = 0.5
 MAX_STALENESS_H = 48
-# Upstream gaps reviewed and accepted, with the staleness limit that applies instead.
+# Two-level alerts (yellow = drones, red = missiles / ballistic): from this month the only
+# source is alerts.in.ua, and Kyiv gets ~3x more alerts than in the single-level history.
+# Batch size is compared within a regime, so the switch does not fail every later month.
+TWO_LEVEL_FROM = "2026-10"
+
+# Reviewed upstream gaps: which check gets a different limit for which month, and why.
 ACCEPTED_GAPS = {
-    "2026-08": (72, "official file has no alerts after 2026-08-29 05:00 UTC"),
+    "2026-08": {
+        "max_staleness_h": 72,
+        "reason": "official file has no alerts after 2026-08-29 05:00 UTC",
+    },
+    "2026-10": {
+        "partial_coverage": True,
+        "no_previous_batch": True,
+        "reason": "API history starts 2026-10-04 (first fetch 2026-11-04); "
+        "2026-09 has no source consistent with the rest",
+    },
 }
+
+
+def regime(month: str) -> str:
+    return "two_level" if month >= TWO_LEVEL_FROM else "single_level"
 
 
 class QualityGateError(Exception):
@@ -48,8 +66,11 @@ def run_gate(conn, batch: Batch, counts: dict) -> list[Check]:
             "SELECT array_agg(rows_clean ORDER BY batch_month DESC) FROM ("
             " SELECT batch_month, rows_clean FROM dwh.batch_audit"
             " WHERE batch_month < %s AND gate_passed"
+            " AND (batch_month >= %s) = %s"
             " ORDER BY batch_month DESC LIMIT 3) t",
             m,
+            TWO_LEVEL_FROM,
+            regime(m) == "two_level",
         )
         or []
     )
@@ -60,7 +81,8 @@ def run_gate(conn, batch: Batch, counts: dict) -> list[Check]:
         ok = abs(ratio - 1) <= MAX_SIZE_DEVIATION
         checks.append(Check("rows_vs_3m_median", ratio, f"1 ± {MAX_SIZE_DEVIATION}", ok))
     else:
-        checks.append(Check("rows_vs_3m_median", None, "skipped: < 3 earlier batches", True))
+        limit = f"skipped: < 3 earlier {regime(m)} batches"
+        checks.append(Check("rows_vs_3m_median", None, limit, True))
 
     dupes = q(
         "SELECT count(*) - count(DISTINCT (oblast, started_at)) FROM dwh.alerts"
@@ -71,8 +93,9 @@ def run_gate(conn, batch: Batch, counts: dict) -> list[Check]:
 
     newest = q("SELECT max(started_at) FROM dwh.alerts WHERE batch_month=%s", m)
     stale_h = None if newest is None else round((batch.end - newest).total_seconds() / 3600, 1)
-    limit_h, reason = ACCEPTED_GAPS.get(m, (MAX_STALENESS_H, ""))
-    limit = f"<= {limit_h}" + (f" (accepted gap: {reason})" if reason else "")
+    gap = ACCEPTED_GAPS.get(m, {})
+    limit_h = gap.get("max_staleness_h", MAX_STALENESS_H)
+    limit = f"<= {limit_h}" + (" (accepted gap)" if "max_staleness_h" in gap else "")
     ok = stale_h is not None and stale_h <= limit_h
     checks.append(Check("hours_since_newest_alert", stale_h, limit, ok))
 
@@ -81,7 +104,12 @@ def run_gate(conn, batch: Batch, counts: dict) -> list[Check]:
 
     if m != FIRST_BATCH:
         prev = q("SELECT count(*) FROM dwh.alerts WHERE batch_month=%s", batch.previous.month)
-        checks.append(Check("previous_batch_rows", prev, "> 0 (feature lookback)", prev > 0))
+        if gap.get("no_previous_batch"):
+            checks.append(Check("previous_batch_rows", prev, "accepted gap: no lookback", True))
+        else:
+            checks.append(Check("previous_batch_rows", prev, "> 0 (feature lookback)", prev > 0))
+    if gap:
+        checks.append(Check("accepted_gap", m, gap["reason"], True))
 
     m1 = q("SELECT count(*) FROM features.m1_hourly WHERE batch_month=%s", m)
     checks.append(Check("m1_rows", m1, f"== {batch.hours} (hours in month)", m1 == batch.hours))

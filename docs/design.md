@@ -164,14 +164,14 @@ Baseline window summary (2025–26): P(at least one start) = 0.46 for 22–04, 0
 |---|---|---|---|
 | [Vadimkin dataset](https://github.com/Vadimkin/ukrainian-air-raid-sirens-dataset) `official_data_en.csv` (MIT) | official alerts, UTC, oblast / raion / hromada level; 299,275 rows, 2022-03-15 … 2026-09-07 | upstream commit `58ee75b` (2026-09-08, the last update of this file) | batches 2022-03 … 2026-08 (the only pipeline source): history, labels |
 | same repo `volunteer_data_en.csv` | oblast-level alerts, `naive` = guessed end; 9.1 MB, 118,544 rows, 2022-02-25 … 2026-10-24 | upstream commit `346bcff` (2026-10-24) | cross-checks only (coarser: 1.3–1.8× more episodes), not a pipeline source |
-| [alerts.in.ua API](https://devs.alerts.in.ua/) `regions/{uid}/alerts/month_ago.json` | finished alerts of the last 30 days, per oblast (25 requests, 2/min) | stored as fetched in the lake, reused on rerun | 2026-09 onwards; needs `ALERTS_IN_UA_TOKEN` |
+| [alerts.in.ua API](https://devs.alerts.in.ua/) `regions/{uid}/alerts/month_ago.json` | alerts of the last 30 days per oblast, raion level, with `alert_level`: **yellow** = drone threat (30 s siren), **red** = missile / ballistic / massive attack (1 min siren); 25 requests at 2/min | DAG `fetch_alerts_in_ua` on the 1st and 15th, 00:30 UTC: each fetch kept as an immutable folder in the lake (`raw/alerts_in_ua/month_ago_<fetch time>/`); first fetch 2026-11-04 (covers 2026-10-04 …, also under DVC as `data/api.dvc`) | 2026-10 onwards: the pipeline builds a month from the union of archived fetches |
 | [Ubilling Aerial Alerts API](https://wiki.ubilling.net.ua/doku.php?id=aerialalertsapi), `?source=aiu&raw` | **active** alerts as published by alerts.in.ua, no token: `started_at` (exact, UTC), `location_type` (oblast / raion / hromada), `alert_type`, `alert_level` (red / yellow); no history, `finished_at` always null | live, checked 2026-10-25 | Lab 4 poller: M2 trigger, live features, own alert log (new batches and labels at raion level, like the official file) |
 | same API, `?source=ual&raw` | the same from ukrainealarm.com (`createdAt`, `alertLevel`, `type: AIR`) | live | backup when `aiu` fails or is stale |
 | Telegram [@kpszsu](https://t.me/s/kpszsu) | typed Air Force posts | — | moved to Lab 3 (with M3 and the retrieval corpus) |
 
 **Live feed check (2026-10-25).** The proxy's `default` source (Vadym Klymenko API) returns `changed: 1970-01-01` for most regions → unusable timestamps, so the poller pins `source=aiu`. Its JSON matches the alerts.in.ua API, so switching to the direct API once the token arrives changes only the URL and auth. At the same moment the `ual` cache was ~4 min older than `aiu` → every response's `cachedat` is checked (6.6). The feed lists only active alerts: an alert's end is the first poll where it is gone (±20 s). Filters: `alert_type = air_raid`; drop permanent alerts (Luhansk since 2022-04-04, Crimea since 2022-12-10), as in the dataset. The proxy has no history, so it cannot back-fill past months: batches 2026-09 and 2026-10 wait for alerts.in.ua `month_ago`; from Lab 4 the poller's own log produces new monthly batches.
 
-**Batch grain:** one calendar month in UTC, equal to the run's data interval (`CronDataIntervalTimetable("@monthly", timezone="UTC")`). A batch holds 1.7k–16k raw records → 0.8k–2.2k oblast episodes (official file) → 672–744 M1 rows (one per hour) and 6–135 M2 rows (one per Kyiv alert).
+**Batch grain:** one calendar month in UTC, equal to the run's data interval (`CronDataIntervalTimetable("0 3 1 * *", timezone="UTC")`: 03:00 on the 1st, after the alerts.in.ua fetch at 00:30). A batch holds 1.7k–16k raw records → 0.8k–2.2k oblast episodes (official file) → 672–744 M1 rows (one per hour) and 6–135 M2 rows (one per Kyiv alert).
 
 **Label delay:** M1 → end of the hour (a 6-h window is fully labelled 6 h after issue). M2 → end of the alert (median 38, P90 161, max 673 min). In the monthly pipeline every label of a batch is known when the batch runs, after the month ends.
 
@@ -194,6 +194,8 @@ Baseline window summary (2025–26): P(at least one start) = 0.46 for 22–04, 0
 - Volunteer data is coarser: for the same months it gives 1.3–1.8× more oblast episodes than the official file (2026-08: 3,916 vs 2,231). Batch 2026-09 built from it failed the size check (2.20× the median of the last 3 passed batches): a source switch the gate is meant to catch. Decision: the volunteer file is no longer a pipeline source; 2026-09 and 2026-10 come from alerts.in.ua.
 - Raion-level records since Nov 2025 triple the raw rows (16k vs 4–5k a month) but not the oblast episodes (1.5k), because the transform merges them.
 - Kyiv City: 2,245 alerts in 2022-03 … 2026-08; an alert started in 5.6% of hours.
+- **Two-level alerts (regime change).** Since autumn 2026 every alert carries a level: yellow (drones) or red (missiles, ballistic, massive attack). Both are sirens, so a Kyiv alert = red **or** yellow, the same meaning as the history. But the system now declares far more alerts: Oct 5–31 2026 gives ≈ 4.5k oblast episodes per 30 days (history 1.8k–2.2k) and ≈ 206 Kyiv alerts per 30 days (history 39–90; 2026-10: 33 red, median 25 min, and 155 yellow, median 40 min). Red and yellow are separate events (2 of 213 Kyiv alerts chain into the next). Decisions: from `TWO_LEVEL_FROM = 2026-10` batches belong to the `two_level` regime; the gate compares batch size only within a regime; `alert_level` is kept on raw records and on `dwh.alerts` episodes (an episode takes its highest level), giving M3's label (drones vs missiles) and an M2 signal for free; models are retrained once ~3 two-level months exist. The official GitHub file stopping on 2026-09-07 may be the same switch (its parser may not read the new messages), not verified.
+- **2026-09 has no consistent source** (official file stopped, volunteer file coarser, API history starts 2026-10-04), and 2026-10 is partial (from 2026-10-04 13:32 UTC). Both are listed in `ACCEPTED_GAPS` with their reason; 2026-10 runs without the September lookback.
 
 **Formats:** raw CSV as published (replayable); clean and features as typed Parquet in the lake and PostgreSQL tables (point lookups, transactional delete-then-insert); training snapshot as Parquet under DVC.
 
@@ -213,7 +215,7 @@ Baseline window summary (2025–26): P(at least one start) = 0.46 for 22–04, 0
 |---|---|---|---|
 | M1 | start rate by hour of day (from the training period) | same-hour start rate over the last 30 days (feature `kyiv_rate_same_hour_30d`) | `HistGradientBoostingClassifier` on the 10 features below |
 | M2 | — | last-12-months P50 / P90 of duration (before the hold-out) | two `HistGradientBoostingRegressor(loss="quantile")`, q = 0.5 / 0.9, P90 ≥ P50 enforced, with monotonic constraints (v3) — longer with more neighbours under alert (`neighbours_under_alert_at_start` +1), shorter with more simultaneous starts (`oblasts_started_prev_5m` −1) — to keep 1.4k training alerts from fitting noise. scikit-learn re-estimates quantile leaf values after each tree, which can break `monotonic_cst`, so `QuantilePair.predict` also projects the output onto monotone functions (mean of the upper and lower monotone envelopes over the training grid) |
-| M3 | most common type / last month's mix | type by hour of day | Lab 3 (needs Telegram labels) |
+| M3 | most common type / last month's mix | type by hour of day | alert level as label from 2026-10 (yellow = drones, red = missiles / ballistic), Telegram detail in Lab 3 |
 
 scikit-learn only: no LightGBM / XGBoost, which need `libomp` from Homebrew on macOS. Hold-out results: 7.2.
 
@@ -310,7 +312,7 @@ flowchart TB
     subgraph SRC["Sources"]
         off["official_data_en.csv<br/>commit 58ee75b"]
         vol["volunteer_data_en.csv<br/>commit 346bcff (cross-checks only)"]
-        api["alerts.in.ua month_ago<br/>(token; months no file covers)"]
+        api["alerts.in.ua month_ago<br/>(token; 2026-10 onwards)"]
     end
     dvcraw[("version point: data/raw.dvc<br/>DVC remote = MinIO bucket dvc")]
     subgraph DAG["Airflow 3.3.1 DAG alerts_etl · batch = one month = data interval"]
@@ -332,7 +334,10 @@ flowchart TB
     off --> dvcraw
     vol --> dvcraw
     dvcraw -- "dvc pull; mounted read-only" --> ex
-    api -.-> ex
+    fetch["DAG fetch_alerts_in_ua<br/>1st + 15th, 00:30 UTC"]
+    lakeapi[("MinIO lake<br/>raw/alerts_in_ua/month_ago_fetch-time/")]
+    api --> fetch --> lakeapi
+    lakeapi -- "union of fetches" --> ex
     ex --> lakeraw
     tr --> lakeclean
     lo -- "DELETE + INSERT the month" --> dwh
@@ -368,7 +373,7 @@ flowchart LR
         tg["Telegram @kpszsu<br/>Air Force posts"]
     end
     subgraph laptop["Laptop · Minikube — scheduled (batch) side"]
-        af["<b>Apache Airflow 3.3.1</b><br/>DAGs: alerts_etl (Lab 2),<br/>ingest_telegram (Lab 3), forecast_6h (Lab 4)<br/><i>AWS: MWAA</i>"]
+        af["<b>Apache Airflow 3.3.1</b><br/>DAGs: alerts_etl, fetch_alerts_in_ua (Lab 2),<br/>ingest_telegram (Lab 3), forecast_6h (Lab 4)<br/><i>AWS: MWAA</i>"]
         minio[("<b>MinIO</b> pgsty/silo<br/>buckets dvc · lake · mlflow<br/><i>AWS: S3</i>")]
         dvc["<b>DVC 3.67.1</b><br/>data versions<br/><i>AWS: S3 remote</i>"]
         mlf["<b>MLflow 3.16.1</b><br/>runs + model registry<br/><i>AWS: SageMaker with MLflow</i>"]
@@ -516,7 +521,7 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 | Party | Contract |
 |---|---|
 | Vadimkin dataset (upstream) | no SLA; files pinned by commit (`58ee75b` official, `346bcff` volunteer) and by DVC hash; columns `oblast, raion, hromada, level, started_at, finished_at, source` (official) / `region, started_at, finished_at, naive` (volunteer), UTC. A schema change fails `validate`; a stale or coarser file fails `quality_check` |
-| alerts.in.ua (upstream) | token; ≤ 8 req/min (hard limit 12), history 2/min → 25 oblasts take ~13 min; `month_ago` covers only the last 30 days, so a month must be fetched within 30 days of its end; responses kept as fetched and replayed on rerun |
+| alerts.in.ua (upstream) | token; ≤ 8 req/min (hard limit 12), history 2/min → 25 oblasts take ~13 min; `month_ago` covers only the last 30 days, so the DAG `fetch_alerts_in_ua` runs on the 1st and 15th (gaps ≤ 17 days) and keeps every response as fetched; a month is built from the union of fetches (latest version of each alert id wins). Raion-level alerts name the raion in `location_title` (`location_raion` is empty) |
 | Ubilling live feed (upstream, Lab 4) | unofficial, no SLA or terms; ≤ 2 req/s; `source` pinned to `aiu` (the unnamed `default` can switch provider); `cachedat` checked; schema change → quality gate fails |
 | Air Force Telegram (upstream) | no contract; Lab 3 |
 | Feature tables (internal) | `features.m1_hourly`, `features.m2_alert`, keyed by time + `feature_version`; a new version is added alongside, never overwrites; training reads the DVC snapshot, serving (Lab 4) the same tables |
@@ -558,7 +563,7 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 
 **Pipeline.** `alerts_etl` backfills 54 monthly batches (2022-03 … 2026-08) in ~7 min; all pass the gate. The first run also failed 2026-08 (official file stops 2026-08-29 05:00 UTC) and 2026-09 (volunteer source, 2.20× the 3-month median); 2026-08 was then accepted as a documented gap and 2026-09 removed (5.2). A broken copy of 2025-06 (30% of ends before starts) passed `validate` and failed `quality_check` on `invalid_share` = 0.37. Rerunning 2025-06 twice gave identical counts (1,440 episodes, 720 M1 rows, 34 M2 rows). Evidence: README §2–3.
 
-**Experiment results** (MLflow at http://localhost:5001, experiments `kyiv-m1-start-risk` and `kyiv-m2-duration`; registered v5 of each, alias `champion`, commit `4134e18`; every run carries `logging_manifest.json`, its train / hold-out datasets and, for M1, `metrics_by_lead.json`). Data version `3e7de26af5034174fa82e86bb10110d9.dir` (features v3), `352f88a87031f9e22af2cce021c2a4a7.dir` (raw); hold-out 2026-03-01 … 2026-08-28; M1 refit monthly on all data from 2023-01, M2 trained 2023-01 … 2026-02.
+**Experiment results** (MLflow at http://localhost:5001, experiments `kyiv-m1-start-risk` and `kyiv-m2-duration`; registered M1 v6 and M2 v7, alias `champion`, commit `52cc28c`; M1 per-lead scores are step metrics (`*_by_lead`, step = lead hour); every run carries `logging_manifest.json`, its train / hold-out datasets and, for M1, `metrics_by_lead.json`). Data version `3e7de26af5034174fa82e86bb10110d9.dir` (features v3), `352f88a87031f9e22af2cce021c2a4a7.dir` (raw); hold-out 2026-03-01 … 2026-08-28; M1 refit monthly on all data from 2023-01, M2 trained 2023-01 … 2026-02.
 
 | M1, 6-h forecast, 4,344 hours (start rate 7.3%) | Brier (main) | AUC | log-loss | F1 ±1 h |
 |---|---|---|---|---|
@@ -586,7 +591,7 @@ The orchestrator and tracking server dominate the bill, not the model → self-h
 
 ### 7.4 Milestones
 
-- **Lab 2 (done):** DVC-versioned raw data on MinIO; `alerts_etl` monthly DAG with idempotent loads and a quality gate; feature tables with `feature_version`; M1 and M2 rule baselines vs GBMs on a time split; MLflow with lineage tags, registry and `champion` alias; one-command reproduction; Feast point-in-time demo.
+- **Lab 2 (done):** DVC-versioned raw data on MinIO; `alerts_etl` monthly DAG with idempotent loads and a quality gate; feature tables with `feature_version`; M1 and M2 rule baselines vs GBMs on a time split; MLflow with lineage tags, registry and `champion` alias; one-command reproduction; Feast point-in-time demo; M1 6-h forecast with monthly refits and per-lead metrics; M2 monotonic constraints; alerts.in.ua history archived by a DAG; two-level (red/yellow) alert regime from 2026-10.
 - **Lab 3:** Telegram ingestion (back-fill from 2024-01), threat-type parser, M3 and the Telegram features for M1/M2; LLM answers "what is the current threat to Kyiv and why this forecast", retrieving Air Force posts from pgvector; evaluated on a fixed question set.
 - **Lab 4:** API + poller on Minikube with probes; forecast DAG; Evidently / Prometheus / Grafana; replayed drifts (raion switch, 2025 long nights, source switch) reach on-call.
 - **Lab 5:** agent with tools (active alerts, forecast, duration, post search); traced, ten-task evaluation.
