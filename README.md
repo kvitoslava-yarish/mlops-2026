@@ -278,7 +278,7 @@ Hold-out 2026-03-01 … 2026-08-28 (the official file stops on 2026-08-29); trai
 - **M1 is evaluated the way it will run: retrained monthly.** Each of the 6 hold-out months is predicted by a model fit on all data from 2023-01 up to the start of that month. The registered model is the latest refit (all data up to 2026-08-28).
 - **M2** uses one split: train 2023-01-01 … 2026-02-28.
 
-Data version `data_version = 3e7de26af5034174fa82e86bb10110d9.dir` (feature_version v3, batches 2022-03 … 2026-08). Registered as `kyiv-m1-start-risk` v5 and `kyiv-m2-duration` v5 (alias `champion`) from commit `4134e18`.
+Data version `data_version = 3e7de26af5034174fa82e86bb10110d9.dir` (feature_version v3, batches 2022-03 … 2026-08). Registered as `kyiv-m1-start-risk` v6 and `kyiv-m2-duration` v7 (alias `champion`) from commit `52cc28c`.
 
 **M1 — start risk, 6-hour forecast issued at 04 / 10 / 16 / 22.** 4,344 hold-out hours, an alert started in 7.3% of them.
 
@@ -316,14 +316,14 @@ MLflow 3.16.1 at http://localhost:5001: backend store PostgreSQL (database `mlfl
 Every write to MLflow goes through one class, [`TrackedRun`](src/kyiv_alerts/training/tracking.py). It refuses to start a run without `data_version` and `git_commit`, records every param, metric, tag, dataset, artifact and model it writes, marks a crashed run `FAILED`, and ends each run by logging that record as **`logging_manifest.json`** and printing a one-line summary:
 
 ```
-[mlflow] kyiv-m1-start-risk / m1-4134e18 (9f0505cc…) FINISHED: 6 tags · 14 params · 58 metrics · 2 datasets · 3 artifacts · model HistGradientBoostingClassifier · kyiv-m1-start-risk v5 @champion
+[mlflow] kyiv-m1-start-risk / m1-52cc28c (b2a2d588…) FINISHED: 6 tags · 14 params · 26 metrics (4 by step) · 2 datasets · 3 artifacts · model HistGradientBoostingClassifier · kyiv-m1-start-risk v6 @champion
 ```
 
 Every `make train` run logs:
 
 - **params:** split dates, seed, hyperparameters, feature list ([configs/train.yaml](configs/train.yaml));
 - **datasets:** the train and hold-out frames as MLflow datasets (schema, rows, source file, digest = DVC hash), in the run's *Datasets* panel;
-- **metrics:** every baseline and the model side by side (`holdout_<metric>_<trivial|rule|model>`), for M1 also per lead hour (`holdout_brier_model_lead3`, …);
+- **metrics:** every baseline and the model side by side (`holdout_<metric>_<trivial|rule|model>`). For M1 the per-lead scores are one metric each with **step = lead hour** (`holdout_{brier,auc}_{model,trivial}_by_lead`), so MLflow draws them as a line chart over leads 0–5; the full table, including the 30-day rule, is in `metrics_by_lead.json`;
 - **artifacts:** `config/train.yaml`, `logging_manifest.json`, `metrics_by_lead.json` (M1), the model;
 - **tags:** `data_version` (DVC hash of `data/features`), `raw_data_version` (DVC hash of `data/raw`), `git_commit`, `git_dirty`, `feature_version`.
 
@@ -344,20 +344,20 @@ make reproduce MODEL=kyiv-m2-duration ALIAS=champion
 
 ```
 $ make reproduce MODEL=kyiv-m1-start-risk ALIAS=champion
-kyiv-m1-start-risk v5: run 9f0505cc9f574b529ace4171641f329a, commit 4134e18e3359597d22b324c915f06f3e8ea1126f, data 3e7de26af5034174fa82e86bb10110d9.dir
-$ git worktree add --detach /var/folders/.../kyiv-repro-…/repo 4134e18e3359597d22b324c915f06f3e8ea1126f
+kyiv-m1-start-risk v6: run b2a2d588c3154161844fa4ddacc6761d, commit 52cc28c80668e34b1478661645482e8ed17caf7d, data 3e7de26af5034174fa82e86bb10110d9.dir
+$ git worktree add --detach /var/folders/.../kyiv-repro-…/repo 52cc28c80668e34b1478661645482e8ed17caf7d
 $ dvc pull data/features.dvc
 3 files fetched and 2 files added
-$ uv run --frozen python -m kyiv_alerts.training.train --model m1 --no-register --reproduces 9f0505cc9f574b529ace4171641f329a ...
+$ uv run --frozen python -m kyiv_alerts.training.train --model m1 --no-register --reproduces b2a2d588c3154161844fa4ddacc6761d ...
 $ git worktree remove --force /var/folders/.../kyiv-repro-…/repo
 holdout_brier_model: registered 0.066545, reproduced 0.066545, |diff| 0.00e+00 (tolerance 0.0001) -> PASS
-reproduction run: 19d6aedad31a444eb03bf9a201de6f25
+reproduction run: 99b943e6b3714d44a4d9a34d23d47b5e
 
 $ make reproduce MODEL=kyiv-m2-duration ALIAS=champion
-kyiv-m2-duration v5: run c12cafb763094127a2622297e7db66e2, commit 4134e18e3359597d22b324c915f06f3e8ea1126f, data 3e7de26af5034174fa82e86bb10110d9.dir
+kyiv-m2-duration v7: run 0bf3cf4a633241dd9e6e0fa99f91a143, commit 52cc28c80668e34b1478661645482e8ed17caf7d, data 3e7de26af5034174fa82e86bb10110d9.dir
 ...
 holdout_pinball_90_model: registered 14.720239, reproduced 14.720239, |diff| 0.00e+00 (tolerance 0.1) -> PASS
-reproduction run: 8a6e482c6760405c8b69b66fb0487df8
+reproduction run: bc45cadd2efc4f3cbbcfee4ec0da70f1
 ```
 
 ## Repository
