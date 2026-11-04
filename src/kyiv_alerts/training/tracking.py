@@ -25,6 +25,7 @@ class TrackedRun:
             "tags": {},
             "params": {},
             "metrics": {},
+            "series": {},
             "datasets": [],
             "artifacts": [],
             "model": None,
@@ -66,6 +67,12 @@ class TrackedRun:
         metrics = {k: float(v) for k, v in metrics.items()}
         mlflow.log_metrics(metrics)
         self.manifest["metrics"].update(metrics)
+
+    def log_series(self, name: str, points: dict[int, float]) -> None:
+        """One metric over a step axis (e.g. lead hour): MLflow draws it as a line chart."""
+        for step, value in sorted(points.items()):
+            mlflow.log_metric(name, float(value), step=int(step))
+        self.manifest["series"][name] = {int(s): float(v) for s, v in sorted(points.items())}
 
     def log_dict(self, obj, artifact_file: str) -> None:
         mlflow.log_dict(obj, artifact_file)
@@ -135,7 +142,8 @@ class TrackedRun:
             registered += f" @{reg['alias']}"
         return (
             f"[mlflow] {m['experiment']} / {m['run_name']} ({m['run_id']}) {m.get('status', '')}: "
-            f"{len(m['tags'])} tags · {len(m['params'])} params · {len(m['metrics'])} metrics · "
+            f"{len(m['tags'])} tags · {len(m['params'])} params · "
+            f"{len(m['metrics']) + len(m['series'])} metrics ({len(m['series'])} by step) · "
             f"{len(m['datasets'])} datasets · {len(m['artifacts']) + 1} artifacts · "
             f"model {model} · {registered}"
         )

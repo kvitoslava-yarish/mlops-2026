@@ -70,3 +70,11 @@ def test_failed_run_is_marked_and_still_has_a_manifest(store):
         raise RuntimeError("training crashed")
     assert store.get_run(run.run_id).info.status == "FAILED"
     assert run.manifest["status"] == "FAILED"
+
+
+def test_series_are_logged_as_one_metric_with_steps(store):
+    with TrackedRun("exp", "r", TAGS) as run:
+        run.log_series("holdout_brier_model_by_lead", {0: 0.054, 1: 0.063, 5: 0.081})
+    history = store.get_metric_history(run.run_id, "holdout_brier_model_by_lead")
+    assert [(h.step, h.value) for h in history] == [(0, 0.054), (1, 0.063), (5, 0.081)]
+    assert run.manifest["series"]["holdout_brier_model_by_lead"] == {0: 0.054, 1: 0.063, 5: 0.081}
