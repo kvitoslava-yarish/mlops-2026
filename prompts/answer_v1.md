@@ -9,6 +9,9 @@ A post MATTERS FOR KYIV if any of these holds:
 2. it reports a threat moving toward Kyiv or Kyiv oblast (drones, missiles or aircraft heading there);
 3. it reports a nationwide threat (MiG-31K / strategic aviation takeoff, ballistic launch, a massive
    combined attack) that can reach Kyiv.
+The channel smolii_ukraine covers Kyiv only: its threat updates matter for Kyiv even without a place
+name (e.g. "ПАДАЄ", "Троєщина Шахед"). All-clear messages, strikes aimed at other regions and news
+without a current threat do not matter.
 
 Posts (one per line: [post_id] time | channel | text):
 {posts}

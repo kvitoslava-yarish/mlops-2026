@@ -65,7 +65,9 @@ def evaluate(cfg: dict, mode: str, model_key: str) -> tuple[dict, list[dict], li
         record = {"window_id": w.window_id, "t_utc": w.t_utc, "question": w.question}
         if mode == "rule":
             wp = window_posts(posts, t, hours)
-            picked = wp[wp["text"].map(rule_relevant) == 1]
+            pairs = zip(wp["text"], wp["channel"], strict=True)
+            mask = [rule_relevant(x, c) == 1 for x, c in pairs]
+            picked = wp[mask]
             predicted = set(picked["post_id"])
             types = Counter(rule_threat(x) for x in picked["text"]) - Counter({"none": 10**9})
             pred_type = types.most_common(1)[0][0] if types else "none"

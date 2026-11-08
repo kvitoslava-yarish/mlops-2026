@@ -50,7 +50,13 @@ def test_answer_metrics_cost_latency():
 def test_keyword_rule():
     assert rule_relevant("Група ударних БпЛА курсом на Бровари") == 1
     assert rule_relevant("Зліт МіГ-31К, загроза балістики по всій території") == 1
+    assert rule_relevant("Троєщина Оболонь Шахед") == 1  # Kyiv districts
     assert rule_relevant("Шахед на Умань") == 0
+    assert rule_relevant("🚀Балістика на Харків") == 0  # regional, not nationwide
+    assert rule_relevant("Загроза застосування балістики") == 1
+    assert rule_relevant("ПАДАЄ", channel="smolii_ukraine") == 1  # Kyiv-only channel
+    assert rule_relevant("ПАДАЄ", channel="kpszsu") == 0
+    assert rule_relevant("Київ/область - без БПЛА. Можна давати відбій") == 0  # all clear
     assert rule_threat("Загроза застосування балістики") == "ballistic"
     assert rule_threat("Шахед курсом на Житомир") == "drones"
 

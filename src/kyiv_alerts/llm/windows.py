@@ -37,13 +37,29 @@ QUESTIONS = [
     "Що з повітряної обстановки зараз важливо для киян?",
     "Чи є загальнонаціональні загрози, які зачіпають і столицю?",
 ]
+# Kyiv city, its districts and neighbourhoods, and Kyiv-oblast towns near the city.
 KYIV_RE = re.compile(
-    r"київ|києв|столиц|бровар|борисп|біл\w*\s*церкв|вишгород|обух|фастів|\bбуч|ірпін|васильк",
+    r"київ|києв|столиц|бровар|борисп|біл\w*\s*церкв|вишгород|обух|фастів|\bбуч|ірпін|васильк"
+    r"|гостомел|вишнев|святопетрівськ|коцюбинськ|чайк|троєщин|оболон|печерськ|осокорк|позняк"
+    r"|русанівк|березняк|дарниц|деснянськ|святошин|голосі|солом.?ян|поділ|подільськ|шулявк|нивк"
+    r"|борщагівк|теремк|видубич|виноградар|лівий берег|правий берег|лівобереж|правобереж",
     re.I,
 )
+# Nationwide threats: carriers that can reach anywhere, or a massive attack. A ballistic strike
+# aimed at another named region ("Балістика на Харків") is regional, not nationwide.
 NATIONWIDE_RE = re.compile(
-    r"міг-?31|mig-?31|балістик|ту-?95|ту-?160|ту-?22|стратегічн\w* авіац|масован", re.I
+    r"міг-?31|mig-?31|ту-?95|ту-?160|ту-?22|стратегічн\w* авіац|масован|по всій території", re.I
 )
+BALLISTIC_RE = re.compile(r"балістик|циркон", re.I)
+OTHER_REGION_RE = re.compile(r"\bна\s+(?!київ|києв|столиц)[А-ЯІЇЄҐ]", re.U)
+THREAT_RE = re.compile(
+    r"шахед|бпла|дрон|ракет|балістик|циркон|калібр|кр\b|падає|падают|удар|вибух|збит|знижен|"
+    r"мопед|🛵|🏍|🚀|летить|летять|рух|курс",
+    re.I,
+)
+# Channels that only cover Kyiv: their threat updates matter for Kyiv even without a place name.
+KYIV_CHANNELS = frozenset({"smolii_ukraine"})
+ALL_CLEAR_RE = re.compile(r"відбій|без бпла|чисто", re.I)
 
 
 def _words(text: str) -> list[str]:
@@ -61,8 +77,14 @@ def quotes_post(question: str, texts, n: int = 4) -> bool:
     return False
 
 
-def rule_relevant(text: str) -> int:
-    return int(bool(KYIV_RE.search(text) or NATIONWIDE_RE.search(text)))
+def rule_relevant(text: str, channel: str = "") -> int:
+    if ALL_CLEAR_RE.search(text):
+        return 0
+    if KYIV_RE.search(text) or NATIONWIDE_RE.search(text):
+        return 1
+    if BALLISTIC_RE.search(text) and not OTHER_REGION_RE.search(text):
+        return 1
+    return int(channel in KYIV_CHANNELS and bool(THREAT_RE.search(text)))
 
 
 def rule_threat(text: str) -> str:
@@ -154,7 +176,7 @@ def prelabel(cfg: dict, windows: pd.DataFrame, label_model: str) -> pd.DataFrame
         llm = {lab.post_id: lab for lab in (call.parsed.labels if call.parsed else [])}
         for p in wp.itertuples(index=False):
             lab = llm.get(p.post_id)
-            rr, rt = rule_relevant(p.text), rule_threat(p.text)
+            rr, rt = rule_relevant(p.text, p.channel), rule_threat(p.text)
             lr = lab.relevant if lab else None
             out.append({
                 "window_id": w.window_id, "post_id": p.post_id, "channel": p.channel,
@@ -170,9 +192,22 @@ def prelabel(cfg: dict, windows: pd.DataFrame, label_model: str) -> pd.DataFrame
     return pd.DataFrame(out)
 
 
+def rerule(labels: pd.DataFrame) -> pd.DataFrame:
+    """Recompute the keyword-rule columns and the review flag; LLM labels and reviews stay."""
+    labels = labels.copy()
+    pairs = zip(labels["text"], labels["channel"], strict=True)
+    labels["rule_relevant"] = [rule_relevant(t, c) for t, c in pairs]
+    labels["rule_threat"] = labels["text"].map(rule_threat)
+    unreviewed = labels["reviewed"] == 0
+    labels.loc[unreviewed, "needs_review"] = (
+        labels["llm_relevant"].isna() | (labels["llm_relevant"] != labels["rule_relevant"])
+    )[unreviewed].astype(int)
+    return labels
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Build the Lab 3 evaluation set")
-    ap.add_argument("step", choices=["select", "prelabel"])
+    ap.add_argument("step", choices=["select", "prelabel", "rerule"])
     ap.add_argument("--label-model", help="default: llm.label_model in configs/rag.yaml")
     a = ap.parse_args()
     cfg = load_config()
@@ -181,6 +216,10 @@ if __name__ == "__main__":
         w = select(cfg)
         w.to_csv(wpath, index=False)
         print(w.groupby("stratum").size().to_dict(), "->", wpath)
+    elif a.step == "rerule":
+        labels = rerule(pd.read_csv(lpath))
+        labels.to_csv(lpath, index=False)
+        print(f"{int(labels['needs_review'].sum())} posts to review -> {lpath}")
     else:
         labels = prelabel(cfg, pd.read_csv(wpath), a.label_model or cfg["llm"]["label_model"])
         labels.to_csv(lpath, index=False)
