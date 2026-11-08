@@ -60,18 +60,6 @@ def archive_month_ago(
     return folder
 
 
-def fetch_time(key: str) -> datetime:
-    """Fetch time from a key like raw/alerts_in_ua/month_ago_2026-11-04T100931Z/14.json."""
-    folder = next(p for p in key.split("/") if p.startswith("month_ago_"))
-    return datetime.strptime(folder, "month_ago_%Y-%m-%dT%H%M%SZ").replace(tzinfo=UTC)
-
-
-def keys_for_batch(keys: Iterable[str], batch: Batch) -> list[str]:
-    """Only the fetches whose 30-day window overlaps the batch month (2-3 of them), chosen
-    by folder name before anything is downloaded."""
-    return [k for k in keys if batch.start < fetch_time(k) and fetch_time(k) - WINDOW < batch.end]
-
-
 def read_archive(
     files: Iterable[tuple[str, bytes]],
 ) -> tuple[list[dict], list[tuple[datetime, datetime]]]:
@@ -92,7 +80,8 @@ def read_archive(
     windows = []
     for folder, uids in sorted(regions.items()):
         if uids >= set(OBLAST_UIDS):
-            fetched = fetch_time(folder)
+            fetched = datetime.strptime(folder.rsplit("/", 1)[-1], "month_ago_%Y-%m-%dT%H%M%SZ")
+            fetched = fetched.replace(tzinfo=UTC)
             windows.append((fetched - WINDOW, fetched))
     return list(by_id.values()), windows
 

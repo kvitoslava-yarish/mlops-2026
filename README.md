@@ -2,9 +2,9 @@
 
 Course project for KSE "Introduction to MLOps and ML System Design" (2026). The full design is in [docs/design.md](docs/design.md).
 
-**Status:** Lab 3. A retrieval + LLM component over Telegram posts (Air Force and a Kyiv monitoring channel): DVC-versioned corpus, pgvector index, Gemini with versioned prompts, a hand-reviewed evaluation set and five tracked runs ([§7](#7-lab-3-llm-over-air-force-and-kyiv-monitor-posts)). Lab 2: raw data versioned with DVC on MinIO, a monthly Airflow ETL with a quality gate, an Airflow DAG that archives the alerts.in.ua history twice a month, feature tables (v3), rule baselines vs trained models on a time split, MLflow tracking and registry with lineage, one-command reproduction. History runs 2022-03 … 2026-08 (official file) plus 2026-10 from the API, the first month of the red/yellow alert system. Runs locally with Docker Compose; built and tested on Apple Silicon.
+**Status:** Lab 2. Raw data versioned with DVC on MinIO, a monthly Airflow ETL with a quality gate, an Airflow DAG that archives the alerts.in.ua history twice a month, feature tables (v3), rule baselines vs trained models on a time split, MLflow tracking and registry with lineage, one-command reproduction, and an optional Feast demo. History runs 2022-03 … 2026-08 (official file) plus 2026-10 from the API, the first month of the red/yellow alert system. Runs locally with Docker Compose; built and tested on Apple Silicon.
 
-**Not built yet:** the live poller, the `forecast_6h` DAG and the API (Lab 4); continuous Telegram ingestion, the Telegram features for M1/M2 and M3 (next). The full picture, built and planned, with every schedule: [docs/diagrams/kyiv_alerts_system.excalidraw](docs/diagrams/kyiv_alerts_system.excalidraw) (open in excalidraw.com or the VS Code Excalidraw extension).
+**Not built yet:** the live poller, the `forecast_6h` DAG and the API (Lab 4), Telegram ingestion and M3 (Lab 3). The full picture, built and planned, with every schedule: [docs/diagrams/kyiv_alerts_system.excalidraw](docs/diagrams/kyiv_alerts_system.excalidraw) (open in excalidraw.com or the VS Code Excalidraw extension).
 
 ## Problem
 
@@ -192,7 +192,7 @@ run 2: manual__2025-06__20261024T205240  success
 
 - **Official file** (commit `58ee75b`): months 2022-03 … 2026-08, the only pinned source the pipeline uses. Its last two days are missing (no alerts after 2026-08-29 05:00 UTC); accepted, see §3.
 - **Volunteer file** (commit `346bcff`): DVC-tracked for cross-checks only, not a pipeline source. It is oblast-level and splits alerts into ~1.3–1.8× more episodes than the official file, so mixing it in would change what the features mean.
-- **alerts.in.ua** (`ALERTS_IN_UA_TOKEN` in `.env`): 2026-10 onwards. `month_ago` only reaches 30 days back, so the Airflow DAG **`fetch_alerts_in_ua`** ([dags/fetch_alerts_in_ua.py](dags/fetch_alerts_in_ua.py)) saves every oblast's response, as returned, on the **1st and 15th at 00:30 UTC** (gaps ≤ 17 days). Each fetch is an immutable folder in the lake, `lake/raw/alerts_in_ua/month_ago_<fetch time>/<uid>.json`; a `check` task fails the run unless all 25 oblasts were saved. `extract` builds a month from the fetches whose 30-day window overlaps it (at most 4, chosen by folder name before downloading), de-duplicated by alert id (latest update wins); only complete fetches count as coverage, and a month they don't fully cover fails `extract` unless `ACCEPTED_GAPS` lists it. For an extra fetch, trigger the DAG in the UI. `make api-smoke` checks the token with one request. (The first fetch, 2026-11-04, is also kept under DVC in `data/api.dvc`.)
+- **alerts.in.ua** (`ALERTS_IN_UA_TOKEN` in `.env`): 2026-10 onwards. `month_ago` only reaches 30 days back, so the Airflow DAG **`fetch_alerts_in_ua`** ([dags/fetch_alerts_in_ua.py](dags/fetch_alerts_in_ua.py)) saves every oblast's response, as returned, on the **1st and 15th at 00:30 UTC** (gaps ≤ 17 days). Each fetch is an immutable folder in the lake, `lake/raw/alerts_in_ua/month_ago_<fetch time>/<uid>.json`; a `check` task fails the run unless all 25 oblasts were saved. `extract` builds a month from the union of all fetches (de-duplicated by alert id, latest update wins); only complete fetches count as coverage, and a month they don't fully cover fails `extract` unless `ACCEPTED_GAPS` lists it. For an extra fetch, trigger the DAG in the UI. `make api-smoke` checks the token with one request. (The first fetch, 2026-11-04, is also kept under DVC in `data/api.dvc`.)
 - **Two alert levels from autumn 2026:** yellow = drone threat, red = missile / ballistic / massive attack. Both are sirens, so a Kyiv alert is red **or** yellow (same meaning as the history); the level is kept as `alert_level` on every episode. The new system declares about 3× more alerts, so from 2026-10 batches belong to a separate `two_level` regime and are compared only with each other ([design §5.2](docs/design.md#52-data)). 2026-09 has no consistent source; 2026-10 starts on Oct 4.
 - **Live alerts without a token** ([Ubilling Aerial Alerts API](https://wiki.ubilling.net.ua/doku.php?id=aerialalertsapi), `?source=aiu&raw`): the alerts.in.ua active-alerts feed relayed by Ubilling, with exact `started_at`, raion level and red/yellow `alert_level`; limit 2 req/s. Only current alerts, no history, so it does not replace `month_ago` for back-fill; it is the Lab 4 poller's source (backup `source=ual`). The `default` source is not used: its timestamps are `1970-01-01`.
 
@@ -356,66 +356,6 @@ holdout_pinball_90_model: registered 14.720239, reproduced 14.720239, |diff| 0.0
 reproduction run: bc45cadd2efc4f3cbbcfee4ec0da70f1
 ```
 
-## 7. Lab 3: LLM over Air Force and Kyiv-monitor posts
-
-**Question at time *t*:** "What currently threatens Kyiv?" The system takes the posts of the last 3 hours from two public Telegram channels, retrieves the top 8 with pgvector and asks Gemini which of them matter for Kyiv, what the threat type is and a one-line summary (JSON). This is the auxiliary job of the system: it gives the Lab 5 agent and the M3 threat-type model a grounded reading of what is in the air right now.
-
-```mermaid
-flowchart LR
-    tg["t.me/s/kpszsu · t.me/s/smolii_ukraine<br/>make corpus"] --> dvc[("data/corpus.dvc<br/>40,858 posts")]
-    dvc -- "make index-all<br/>500-char chunks, local encoder" --> pgv[("pgvector · rag.chunks_&lt;model&gt;<br/>41,306 chunks per model")]
-    q["question + time t"] --> ret["retrieve: posted_at ∈ [t − 3 h, t)<br/>exact cosine, top 8"]
-    pgv --> ret --> llm["Gemini gemini-3.8-flash<br/>prompts/answer_v1.md · JSON schema"]
-    llm --> out["relevant post ids · threat type · summary"]
-    ev["data/eval: 40 windows, 2,404 labelled posts"] -- "make rag-eval-all" --> mlf["MLflow experiment kyiv-llm-rag"]
-```
-
-### Corpus and index
-
-| | |
-|---|---|
-| Source | public web preview `t.me/s/<channel>`, scraped by [sources/telegram.py](src/kyiv_alerts/sources/telegram.py) (`make corpus`, no login) |
-| Channels | **@kpszsu** (Ukrainian Air Force, official, whole country) 20,038 posts; **@smolii_ukraine** (Kyiv-only monitoring, live district updates) 20,820 posts |
-| Period | 2026-07-24 … 2026-10-23 UTC (full days in both channels); median post 39 characters |
-| Version | `data/corpus.dvc`, hash `5402f138e78962a8febde1b153cd99b9.dir`, logged as `data_version` on every LLM run |
-| Index | `make index MODEL=<key>` rebuilds `rag.chunks_<key>` from scratch: **40,858 posts → 41,306 chunks** (500 characters, 100 overlap; only long morning summaries split). Same count for all three models and on a rerun |
-| Store | pgvector 0.8.7 in the existing PostgreSQL 16 (`warehouse` database, schema `rag`); btree on `posted_at`, exact cosine ranking inside the 3-hour window (no HNSW: it filters after the vector search and can return fewer than k posts) |
-
-All settings are in [configs/rag.yaml](configs/rag.yaml); the prompts are versioned files in [prompts/](prompts/) and their sha256 is a tag on every run (`prompt_answer_sha256` = `1af0377f2374…`, `prompt_baseline_sha256` = `51fa64296329…`).
-
-### Evaluation set
-
-- **Windows** ([data/eval/windows.csv](data/eval/windows.csv), `make eval-windows`, seed 7): 40 times *t* between 2026-07-24 and 2026-10-22: 15 just before a Kyiv alert started, 10 just after an Air Force post about a nationwide threat (MiG-31K, strategic aviation, massive attack), 15 quiet times with no Kyiv alert within 3 h before / 2 h after. Each has a Ukrainian question paraphrased from 12 templates; a test checks that no question shares 4 consecutive words with a post in its window.
-- **Labels** ([data/eval/labels.csv](data/eval/labels.csv)): every post in each window (2,404) is labelled *relevant to Kyiv now* (it mentions Kyiv or the oblast, a threat heading there, or a nationwide threat) and a threat type. Pre-labels came from two independent sources: `gemini-4-argon` with [prompts/label_v1.md](prompts/label_v1.md) (a stronger model than the answerer, so Flash is not graded by itself) and the keyword rule. **All 567 disagreements and 87 spot checks were reviewed by hand** (`reviewed = 1`): the reviewer sided with argon on 458, with the rule on 109 and overturned 5 labels both had agreed on. Result: 1,134 relevant posts; 34 of 40 windows hold at least one.
-- **Caveat:** the keyword rule was refined once after reading argon's disagreements (Kyiv districts, the Kyiv-only channel, all-clear). Its score below is therefore optimistic.
-- **Does the rubric mean anything?** A Kyiv alert is active or starts within 1 h for **71.7%** of relevant posts vs **47.8%** of the others (both channels alike: 72 vs 47%, 72 vs 50%). "Starts within the next hour" alone does not separate them (14 vs 17%): relevant posts mostly arrive while the Kyiv alert is already on.
-
-### Results (MLflow experiment `kyiv-llm-rag`, commit `3039de4`)
-
-| Run | hit@1 | hit@3 | hit@8 | MRR | answer F1 | F1 given shown | recall ceiling | threat type acc. | cost / request | latency p50 / p95 |
-|---|---|---|---|---|---|---|---|---|---|---|
-| keyword rule (no LLM) | — | — | — | — | **0.794** | — | — | 0.700 | 0 | no API call |
-| Gemini, all window posts (no retrieval) | — | — | — | — | 0.508 | 0.508 | 1.00 | 0.625 | $0.0047 | 3.79 / 12.85 s |
-| **RAG, multilingual-e5-small** | **0.676** | **0.882** | **0.971** | **0.785** | 0.202 | **0.896** | 0.126 | **0.875** | **$0.0011** | 2.35 / 3.02 s |
-| RAG, multilingual-e5-base | 0.618 | 0.853 | 0.971 | 0.755 | 0.199 | 0.885 | 0.126 | 0.825 | $0.0011 | 2.52 / 3.78 s |
-| RAG, paraphrase-multilingual-MiniLM-L12 | 0.647 | 0.794 | 0.882 | 0.726 | 0.172 | 0.871 | 0.111 | 0.675 | $0.0011 | 2.43 / 3.53 s |
-
-40 calls per LLM run (first call cold), no errors, no hallucinated ids. Tokens per RAG run: ~37k in, ~4k out, 0–915 thinking tokens although `thinking_budget: 0` (up to 20% of output tokens; billed at the output price and included in cost). Gemini 3.8 Flash: $0.75 / $3.75 per 1M input / output tokens.
-
-- **Retrieval:** e5-small wins on every rank metric except hit@5 (e5-base 0.94 vs 0.91); it indexes the corpus in 172 s on CPU vs 572 s for e5-base. MiniLM misses a relevant post in the top 8 in 4 of 34 windows. **Chosen: e5-small** (`retrieval.embedding_model`).
-- **Answer F1 is capped by k, not by the model:** a window holds ~33 relevant posts and the LLM sees 8, so only 12.6% of the relevant posts are ever shown. Among what it is shown, Flash picks the right posts with F1 0.90 (precision 0.89, recall 0.90). The no-retrieval baseline sees everything but finds only 36% of the relevant posts in long contexts.
-- **Threat type** is the answer a user reads: RAG with e5-small gets 35 / 40 windows right, against 25 for Flash on all posts and 28 for the rule.
-- **The rule wins post-level F1** because it saw the labels' disagreements while being written (caveat above), and because "every Kyiv-channel post is relevant" is nearly the labelling rule itself. It cannot summarise or weigh posts.
-- Next: raise `top_k` or retrieve per channel if the job needs every relevant post (e.g. counts as M1 features); the summary use case does not.
-
-```bash
-make corpus          # scrape both channels → data/corpus/*.csv, dvc add + push
-make index-all       # rag.chunks_e5_small / e5_base / minilm
-make eval-windows    # data/eval/windows.csv (committed)
-make eval-prelabel   # data/eval/labels.csv pre-labels (Gemini + rule), then review by hand
-make llm-rule llm-baseline rag-eval-all   # 5 MLflow runs; needs GEMINI_API_KEY in .env
-```
-
 ## Repository
 
 ```
@@ -436,7 +376,7 @@ data/eval/                         evaluation windows and reviewed labels (commi
 scripts/                           seeding, bad batch, Airflow run / backfill helpers
 docker/, docker-compose.yml        local stack (Airflow, MLflow images, Postgres init)
 data/raw.dvc, data/features.dvc,   data versions (contents live in the DVC remote)
-  data/api.dvc, data/corpus.dvc
+  data/api.dvc
 docs/design.md                     design document
 docs/diagrams/                     system diagram (Excalidraw): sources, jobs, models, schedules
 tests/                             unit tests (no Docker needed): make test
