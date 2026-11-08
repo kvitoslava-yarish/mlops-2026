@@ -1,5 +1,3 @@
-"""Query path: question at time t -> posts of the last N hours -> top-k by embedding -> LLM."""
-
 import hashlib
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -28,13 +26,11 @@ def prompt_hash(path: str | Path) -> str:
 
 
 def window_posts(posts: pd.DataFrame, t: datetime, hours: float) -> pd.DataFrame:
-    """Posts published in [t - hours, t): what was known at time t, nothing later."""
     lo = t - timedelta(hours=hours)
     return posts[(posts["posted_at"] >= lo) & (posts["posted_at"] < t)]
 
 
 def retrieve(conn, cfg: dict, model_key: str, t: datetime, question: str, k: int) -> list[dict]:
-    """Top-k chunks of the time window, exact cosine ranking; one row per post (best chunk)."""
     model_cfg = cfg["retrieval"]["embedding_models"][model_key]
     q = embed([question], model_cfg, "query")[0]
     lo = t - timedelta(hours=cfg["retrieval"]["window_hours"])

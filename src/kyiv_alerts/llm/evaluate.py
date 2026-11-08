@@ -1,18 +1,3 @@
-"""Run the evaluation set and log one MLflow run (experiment kyiv-llm-rag).
-
-    uv run python -m kyiv_alerts.llm.evaluate rag [--model e5_base]   # retrieval + Gemini
-    uv run python -m kyiv_alerts.llm.evaluate baseline                # Gemini, all window posts
-    uv run python -m kyiv_alerts.llm.evaluate rule                    # keyword rule, no LLM
-
-Retrieval metrics (hit@k, MRR) measure the encoder + index; the answer metrics (precision,
-recall, F1 of the post ids the LLM returns, threat-type accuracy) measure the whole path. Top-k caps
-recall when a window has more relevant posts than k, so ``recall_ceiling`` (share of relevant
-posts the LLM was shown) and ``answer_*_given_shown`` (scored against the relevant posts it
-saw) separate the retriever's limit from the LLM's choices.
-Every run logs the prompt-file hash, the eval-set hash, tokens (incl. thinking), cost and
-p50 / p95 latency, plus the corpus DVC hash and the git commit as lineage.
-"""
-
 import argparse
 import hashlib
 import os

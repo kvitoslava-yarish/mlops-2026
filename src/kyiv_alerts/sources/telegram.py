@@ -1,13 +1,3 @@
-"""Public Telegram channels through the web preview (t.me/s/<channel>), no login.
-
-Ported from lab_1/air_alerts_telegram/fetch_telegram_preview.py: same parsing, plus the
-channel name and a stable post id "<channel>/<id>". Walks back 20 posts per page and is
-resumable, so the future ingest DAG can reuse it.
-
-    uv run python -m kyiv_alerts.sources.telegram --channel smolii_ukraine \\
-        --since 2026-07-23 --until 2026-10-24 --out data/corpus/smolii_ukraine.csv
-"""
-
 import argparse
 import csv
 import html

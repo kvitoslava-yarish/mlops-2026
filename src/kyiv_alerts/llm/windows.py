@@ -1,13 +1,3 @@
-"""Evaluation set: time windows, paraphrased questions and pre-labelled posts.
-
-    uv run python -m kyiv_alerts.llm.windows select     # data/eval/windows.csv
-    uv run python -m kyiv_alerts.llm.windows prelabel   # data/eval/labels.csv (rule + Gemini)
-
-Windows are drawn from three strata (seeded): just before a Kyiv alert start, just after a
-nationwide-threat post, and quiet times with no Kyiv alert nearby. Questions are paraphrases
-that never quote a post; labels are pre-filled and then reviewed by hand (column ``reviewed``).
-"""
-
 import argparse
 import re
 from datetime import timedelta
@@ -37,7 +27,6 @@ QUESTIONS = [
     "Що з повітряної обстановки зараз важливо для киян?",
     "Чи є загальнонаціональні загрози, які зачіпають і столицю?",
 ]
-# Kyiv city, its districts and neighbourhoods, and Kyiv-oblast towns near the city.
 KYIV_RE = re.compile(
     r"київ|києв|столиц|бровар|борисп|біл\w*\s*церкв|вишгород|обух|фастів|\bбуч|ірпін|васильк"
     r"|гостомел|вишнев|святопетрівськ|коцюбинськ|чайк|троєщин|оболон|печерськ|осокорк|позняк"
@@ -45,8 +34,6 @@ KYIV_RE = re.compile(
     r"|борщагівк|теремк|видубич|виноградар|лівий берег|правий берег|лівобереж|правобереж",
     re.I,
 )
-# Nationwide threats: carriers that can reach anywhere, or a massive attack. A ballistic strike
-# aimed at another named region ("Балістика на Харків") is regional, not nationwide.
 NATIONWIDE_RE = re.compile(
     r"міг-?31|mig-?31|ту-?95|ту-?160|ту-?22|стратегічн\w* авіац|масован|по всій території", re.I
 )

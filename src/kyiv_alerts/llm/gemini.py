@@ -1,5 +1,3 @@
-"""Gemini through the google-genai SDK: one call, structured JSON output, usage and latency."""
-
 import os
 import time
 from dataclasses import dataclass, field
@@ -30,7 +28,6 @@ def client():
 
 
 def generate(cli, llm_cfg: dict, prompt: str, schema: type[BaseModel], model: str = "") -> Call:
-    """Billed output = candidates + thoughts tokens (thinking models bill the reasoning too)."""
     from google.genai import types
 
     config = types.GenerateContentConfig(

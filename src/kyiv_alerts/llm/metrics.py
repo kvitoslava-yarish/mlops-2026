@@ -1,5 +1,3 @@
-"""Retrieval and answer metrics for the evaluation set."""
-
 import numpy as np
 
 
