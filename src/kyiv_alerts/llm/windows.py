@@ -173,7 +173,7 @@ def prelabel(cfg: dict, windows: pd.DataFrame, label_model: str) -> pd.DataFrame
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Build the Lab 3 evaluation set")
     ap.add_argument("step", choices=["select", "prelabel"])
-    ap.add_argument("--label-model", default="gemini-pro-latest")
+    ap.add_argument("--label-model", help="default: llm.label_model in configs/rag.yaml")
     a = ap.parse_args()
     cfg = load_config()
     wpath, lpath = REPO_ROOT / cfg["eval"]["windows"], REPO_ROOT / cfg["eval"]["labels"]
@@ -182,7 +182,7 @@ if __name__ == "__main__":
         w.to_csv(wpath, index=False)
         print(w.groupby("stratum").size().to_dict(), "->", wpath)
     else:
-        labels = prelabel(cfg, pd.read_csv(wpath), a.label_model)
+        labels = prelabel(cfg, pd.read_csv(wpath), a.label_model or cfg["llm"]["label_model"])
         labels.to_csv(lpath, index=False)
         print(f"{len(labels)} posts, {int(labels['relevant'].sum())} relevant, "
               f"{int(labels['needs_review'].sum())} to review -> {lpath}")  # fmt: skip

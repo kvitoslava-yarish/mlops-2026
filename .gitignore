@@ -230,3 +230,5 @@ mlartifacts/
 # secrets (alerts.in.ua token, Telegram session)
 .env
 *.session
+# the Lab 3 evaluation set is small, public and must be in git (its hash is logged on every run)
+!data/eval/*.csv

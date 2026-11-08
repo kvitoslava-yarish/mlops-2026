@@ -34,11 +34,14 @@ retrieval:
 
 llm:
   provider: gemini        # API key from the environment: GEMINI_API_KEY
-  model: gemini-flash-latest   # replaced by the exact versioned id after checking the API's model list
+  model: gemini-3.8-flash      # pinned id, never an alias: the provider re-routes deprecated names
+  label_model: gemini-4-argon   # stronger model for the pre-labels, so the answerer is not graded by itself ($2 / $10 per 1M through 2026-11-30)
   temperature: 0.0
   max_output_tokens: 1024
-  thinking_budget: 0
-  price_usd_per_1m: {input: null, output: null}   # filled from Google's published price list
+  thinking_budget: 0            # no hidden reasoning for the answer path (billed tokens stay visible)
+  # Paid tier, aistudio.google.com/docs/pricing, checked 2026-11-08: $0.75 / $3.75 per 1M tokens
+  # through 2026-12-31 ($1.50 / $7.50 from 2027-01-01); output price covers thinking tokens too.
+  price_usd_per_1m: {input: 0.75, output: 3.75}
 
 prompts:
   answer: prompts/answer_v1.md
