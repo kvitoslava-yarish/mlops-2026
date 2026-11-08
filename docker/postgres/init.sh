@@ -9,3 +9,5 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" <<-EOSQL
     CREATE USER warehouse WITH PASSWORD '${WAREHOUSE_DB_PASSWORD}';
     CREATE DATABASE warehouse OWNER warehouse;
 EOSQL
+# pgvector for the Lab 3 retrieval index (the extension needs the superuser to create it)
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname warehouse -c "CREATE EXTENSION IF NOT EXISTS vector;"

@@ -41,7 +41,7 @@ x-airflow-common: &airflow-common
 
 services:
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:0.8.7-pg16-trixie  # PostgreSQL 16 + pgvector 0.8.7, same Debian (glibc) as postgres:16
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}

@@ -1,0 +1,50 @@
+# Retrieval + LLM configuration for Lab 3. Every value is logged on each MLflow run, and the
+# Lab 4 service reads the same file: the index you evaluate is the index you serve.
+corpus:
+  files:
+    - data/corpus/kpszsu.csv           # Ukrainian Air Force (official)
+    - data/corpus/smolii_ukraine.csv   # independent monitoring channel
+  since: "2026-07-24"                  # full UTC days, both channels
+  until: "2026-10-24"                  # exclusive
+
+chunking:
+  chunk_chars: 500        # posts are a median of ~55 characters: almost all stay one chunk
+  overlap_chars: 100      # only long posts (morning summaries) are split
+
+retrieval:
+  window_hours: 3         # posts considered for the question "what threatens Kyiv now?" at time t
+  top_k: 8
+  embedding_model: e5_small
+  embedding_models:       # the parameter varied in the Lab 3 comparison
+    e5_small:
+      hf_id: intfloat/multilingual-e5-small
+      dim: 384
+      query_prefix: "query: "
+      passage_prefix: "passage: "
+    e5_base:
+      hf_id: intfloat/multilingual-e5-base
+      dim: 768
+      query_prefix: "query: "
+      passage_prefix: "passage: "
+    minilm:
+      hf_id: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      dim: 384
+      query_prefix: ""
+      passage_prefix: ""
+
+llm:
+  provider: gemini        # API key from the environment: GEMINI_API_KEY
+  model: gemini-flash-latest   # replaced by the exact versioned id after checking the API's model list
+  temperature: 0.0
+  max_output_tokens: 1024
+  thinking_budget: 0
+  price_usd_per_1m: {input: null, output: null}   # filled from Google's published price list
+
+prompts:
+  answer: prompts/answer_v1.md
+  baseline: prompts/baseline_v1.md
+  label: prompts/label_v1.md
+
+eval:
+  windows: data/eval/windows.csv
+  labels: data/eval/labels.csv

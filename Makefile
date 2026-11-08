@@ -11,7 +11,8 @@ MODEL    ?= kyiv-m1-start-risk
 ALIAS    ?= champion
 
 .PHONY: setup lint test env up down nuke ps logs data data-seed run backfill bad-batch \
-        row-counts snapshot train reproduce api-smoke
+        row-counts snapshot train reproduce api-smoke corpus index index-all eval-windows \
+        eval-prelabel llm-rule llm-baseline rag-eval rag-eval-all
 
 ## --- environment ----------------------------------------------------------
 setup:            ## pinned Python env from uv.lock
@@ -83,3 +84,34 @@ reproduce:        ## rerun a registered version from its tags: make reproduce MO
 
 api-smoke:        ## check ALERTS_IN_UA_TOKEN: fetch the last 30 days for Kyiv only
 	uv run python -m kyiv_alerts.sources.alerts_in_ua
+
+## --- Lab 3: LLM + retrieval ------------------------------------------------------------
+corpus:           ## scrape @smolii_ukraine for the corpus range, version data/corpus with DVC
+	uv run python -m kyiv_alerts.sources.telegram --channel smolii_ukraine \
+		--since 2026-07-24 --until 2026-10-24 --out data/corpus/smolii_ukraine.csv
+	uv run dvc add data/corpus
+	uv run dvc push data/corpus.dvc
+
+index:            ## rebuild the pgvector index from the corpus: make index [MODEL=e5_small]
+	uv run python -m kyiv_alerts.llm.index $(if $(MODEL),--model $(MODEL))
+
+index-all:        ## rebuild the index for every embedding model in configs/rag.yaml
+	for m in e5_small e5_base minilm; do uv run python -m kyiv_alerts.llm.index --model $$m; done
+
+eval-windows:     ## pick the evaluation windows and questions (seeded) -> data/eval/windows.csv
+	uv run python -m kyiv_alerts.llm.windows select
+
+eval-prelabel:    ## pre-label every post in every window (rule + Gemini) -> data/eval/labels.csv
+	uv run python -m kyiv_alerts.llm.windows prelabel
+
+llm-rule:         ## keyword-rule baseline (no LLM) on the eval set, logged to MLflow
+	uv run python -m kyiv_alerts.llm.evaluate rule
+
+llm-baseline:     ## LLM baseline: Gemini on all window posts, no retrieval, logged to MLflow
+	uv run python -m kyiv_alerts.llm.evaluate baseline
+
+rag-eval:         ## retrieval + Gemini on the eval set: make rag-eval [MODEL=e5_small]
+	uv run python -m kyiv_alerts.llm.evaluate rag $(if $(MODEL),--model $(MODEL))
+
+rag-eval-all:     ## the embedding-model comparison: rag-eval for every model
+	for m in e5_small e5_base minilm; do uv run python -m kyiv_alerts.llm.evaluate rag --model $$m; done
