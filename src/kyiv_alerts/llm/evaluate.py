@@ -5,7 +5,10 @@
     uv run python -m kyiv_alerts.llm.evaluate rule                    # keyword rule, no LLM
 
 Retrieval metrics (hit@k, MRR) measure the encoder + index; the answer metrics (precision,
-recall, F1 of the post ids the LLM returns, threat-type accuracy) measure the whole path.
+recall, F1 of the post ids the LLM returns, threat-type accuracy) measure the whole path. Top-k caps
+recall when a window has more relevant posts than k, so ``recall_ceiling`` (share of relevant
+posts the LLM was shown) and ``answer_*_given_shown`` (scored against the relevant posts it
+saw) separate the retriever's limit from the LLM's choices.
 Every run logs the prompt-file hash, the eval-set hash, tokens (incl. thinking), cost and
 p50 / p95 latency, plus the corpus DVC hash and the git commit as lineage.
 """
@@ -57,6 +60,7 @@ def evaluate(cfg: dict, mode: str, model_key: str) -> tuple[dict, list[dict], li
     cli = gemini.client() if mode in ("rag", "baseline") else None
     conn = warehouse.connect(get_settings().warehouse_dsn) if mode == "rag" else None
     tp = fp = fn = hallucinated = type_ok = 0
+    tp_s = fn_s = n_rel_shown = 0
     hits = {kk: [] for kk in K_VALUES}
     rrs, calls, preds = [], [], []
     for w in windows.itertuples(index=False):
@@ -91,6 +95,9 @@ def evaluate(cfg: dict, mode: str, model_key: str) -> tuple[dict, list[dict], li
             predicted = set(answer.relevant_post_ids) if answer else set()
             hallucinated += len(predicted - shown)
             predicted &= shown
+            rel_shown = rel & shown
+            n_rel_shown += len(rel_shown)
+            tp_s, fn_s = tp_s + len(predicted & rel_shown), fn_s + len(rel_shown - predicted)
             pred_type = answer.threat_type if answer else "none"
             record.update({
                 "summary": answer.summary if answer else "", "error": call.error,
@@ -111,6 +118,9 @@ def evaluate(cfg: dict, mode: str, model_key: str) -> tuple[dict, list[dict], li
         result |= {f"hit_at_{kk}": sum(v) / len(v) for kk, v in hits.items() if v}
         result |= {"mrr": sum(rrs) / len(rrs), "n_windows_with_relevant": len(rrs)}
     if calls:
+        shown_prf = metrics.prf(tp_s, fp, fn_s)
+        result |= {f"answer_{m}_given_shown": v for m, v in shown_prf.items()}
+        result["recall_ceiling"] = n_rel_shown / max(result["n_relevant_posts"], 1)
         ok = [c for c in calls if not c.error]
         t_in = sum(c.tokens_in for c in ok)
         t_out = sum(c.tokens_out + c.tokens_thoughts for c in ok)
