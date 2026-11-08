@@ -27,12 +27,15 @@ x-airflow-common: &airflow-common
     AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER}
     AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD}
     RAW_DATA_DIR: /opt/airflow/data/raw
+    HF_HOME: /opt/airflow/hf-cache   # encoder weights, downloaded once
     ALERTS_IN_UA_TOKEN: ${ALERTS_IN_UA_TOKEN:-}
   volumes:
     - ./dags:/opt/airflow/dags
     - ./src:/opt/airflow/src:ro
     - ./data:/opt/airflow/data:ro
+    - ./configs:/opt/airflow/configs:ro
     - airflow-logs:/opt/airflow/logs
+    - hf-cache:/opt/airflow/hf-cache
   depends_on: &airflow-depends
     postgres:
       condition: service_healthy
@@ -170,3 +173,4 @@ volumes:
   postgres-data:
   minio-data:
   airflow-logs:
+  hf-cache:

@@ -80,3 +80,56 @@ def test_answer_schema_parses_llm_json():
         '{"relevant_post_ids": ["kpszsu/9"], "threat_type": "drones", "summary": "Drones."}'
     )
     assert a.relevant_post_ids == ["kpszsu/9"]
+
+
+def _page(channel, posts):
+    return "".join(
+        f'<div data-post="{channel}/{i}"><time datetime="{t}"></time>'
+        f'<div class="tgme_widget_message_text">post {i}</div></div>'
+        for i, t in posts
+    )
+
+
+def test_fetch_new_stops_at_known_id_and_returns_oldest_first():
+    from kyiv_alerts.sources.telegram import fetch_new
+
+    day = "2026-11-08T"
+    pages = {None: [(105, day + "10:00:00+00:00"), (106, day + "10:05:00+00:00")],
+             105: [(103, day + "09:00:00+00:00"), (104, day + "09:30:00+00:00")]}  # fmt: skip
+    calls = []
+
+    def fetch(channel, before):
+        calls.append(before)
+        return _page(channel, pages[before])
+
+    posts = fetch_new("kpszsu", 103, "2026-10-24", sleep_s=0, fetch=fetch)
+    assert [p["id"] for p in posts] == [104, 105, 106]
+    assert calls == [None, 105]  # stopped once the page reached the known id 103
+
+
+def test_fetch_new_first_run_uses_since_and_flags_broken_markup():
+    from kyiv_alerts.sources.telegram import fetch_new
+
+    ch = "smolii_ukraine"
+    page = _page(ch, [(7, "2026-10-23T23:00:00+00:00"), (8, "2026-10-24T01:00:00+00:00")])
+    assert [p["id"] for p in fetch_new(ch, None, "2026-10-24", 0, lambda c, b: page)] == [8]
+    with pytest.raises(RuntimeError, match="no posts parsed"):
+        fetch_new(ch, None, "2026-10-24", 0, lambda c, b: "<html>changed</html>")
+
+
+def test_raw_file_round_trip_skips_posts_without_time():
+    import json
+
+    from kyiv_alerts.etl.telegram import parse_raw, raw_key
+
+    key = raw_key("kpszsu", datetime(2026, 11, 8, 7, 45, tzinfo=UTC))
+    assert key == "raw/telegram/kpszsu/2026-11-08/20261108T074500Z.jsonl"
+    t = "2026-11-08T07:00:00+00:00"
+    lines = [
+        {"post_id": "kpszsu/1", "channel": "kpszsu", "id": 1, "datetime_utc": t,
+         "text": "БпЛА на Київ", "views": "1K"},
+        {"post_id": "kpszsu/2", "channel": "kpszsu", "id": 2, "datetime_utc": "",
+         "text": "", "views": ""},
+    ]  # fmt: skip
+    rows = parse_raw(key, "\n".join(json.dumps(x, ensure_ascii=False) for x in lines).encode())
+    assert rows == [("kpszsu/1", "kpszsu", 1, t, "БпЛА на Київ", "1K", key)]

@@ -7,6 +7,14 @@ corpus:
   since: "2026-07-24"                  # full UTC days, both channels
   until: "2026-10-24"                  # exclusive
 
+ingest:                   # DAG ingest_telegram: 03:45 / 09:45 / 15:45 / 21:45 Kyiv, before each M1 run
+  channels: [kpszsu, smolii_ukraine]
+  first_since: "2026-10-24"  # the first run back-fills from the end of the DVC corpus
+  sleep_s: 0.8               # between preview pages (<= 1.25 req/s)
+  max_age_hours:             # newest post older than this fails the run (blocked, markup change);
+    kpszsu: 6                # longest silence Jul-Oct 2026: 2.6 h
+    smolii_ukraine: 18       # longest silence Jul-Oct 2026: 10.2 h
+
 chunking:
   chunk_chars: 500        # posts are a median of ~55 characters: almost all stay one chunk
   overlap_chars: 100      # only long posts (morning summaries) are split

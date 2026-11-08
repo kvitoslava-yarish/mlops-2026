@@ -73,7 +73,51 @@ def table(model_key: str) -> str:
     return f"rag.chunks_{model_key}"
 
 
+def create_table(cur, model_key: str, dim: int) -> None:
+    cur.execute("CREATE SCHEMA IF NOT EXISTS rag")
+    cur.execute(
+        f"CREATE TABLE IF NOT EXISTS {table(model_key)} (chunk_id text PRIMARY KEY,"
+        " post_id text NOT NULL, channel text NOT NULL, posted_at timestamptz NOT NULL,"
+        f" text text NOT NULL, embedding vector({dim}) NOT NULL)"
+    )
+    cur.execute(f"CREATE INDEX IF NOT EXISTS chunks_{model_key}_posted_at_idx"
+                f" ON {table(model_key)} (posted_at)")  # fmt: skip
+
+
+def insert_chunks(cur, model_key: str, chunks: pd.DataFrame, vectors: np.ndarray) -> None:
+    rows = [
+        (c.chunk_id, c.post_id, c.channel, c.posted_at.to_pydatetime(), c.text, v)
+        for c, v in zip(chunks.itertuples(index=False), vectors, strict=True)
+    ]
+    execute_values(cur, f"INSERT INTO {table(model_key)} VALUES %s ON CONFLICT DO NOTHING",
+                   rows, page_size=2000)  # fmt: skip
+
+
+def update_index(conn, cfg: dict, model_key: str) -> int:
+    """Embed the posts in telegram.posts that the index does not have yet (DAG ingest_telegram)."""
+    model_cfg = cfg["retrieval"]["embedding_models"][model_key]
+    register_vector(conn)
+    with conn, conn.cursor() as cur:
+        create_table(cur, model_key, model_cfg["dim"])
+        cur.execute("SELECT to_regclass('telegram.posts')")
+        if cur.fetchone()[0] is None:
+            return 0
+        cur.execute(
+            "SELECT post_id, channel, posted_at, text FROM telegram.posts p WHERE text <> ''"
+            f" AND NOT EXISTS (SELECT 1 FROM {table(model_key)} c WHERE c.post_id = p.post_id)"
+        )
+        posts = pd.DataFrame(cur.fetchall(), columns=["post_id", "channel", "posted_at", "text"])
+        if posts.empty:
+            return 0
+        posts["posted_at"] = pd.to_datetime(posts["posted_at"], utc=True)
+        chunks = chunk_posts(posts, cfg["chunking"]["chunk_chars"],
+                             cfg["chunking"]["overlap_chars"])  # fmt: skip
+        insert_chunks(cur, model_key, chunks, embed(chunks["text"].tolist(), model_cfg, "passage"))
+    return len(posts)
+
+
 def build_index(cfg: dict, model_key: str) -> dict:
+    """Rebuild from the DVC corpus, then add the posts ingested since (telegram.posts)."""
     model_cfg = cfg["retrieval"]["embedding_models"][model_key]
     posts = load_corpus(cfg)
     chunks = chunk_posts(posts, cfg["chunking"]["chunk_chars"], cfg["chunking"]["overlap_chars"])
@@ -82,21 +126,12 @@ def build_index(cfg: dict, model_key: str) -> dict:
     try:
         register_vector(conn)
         with conn, conn.cursor() as cur:
-            cur.execute("CREATE SCHEMA IF NOT EXISTS rag")
             cur.execute(f"DROP TABLE IF EXISTS {table(model_key)}")
-            cur.execute(
-                f"CREATE TABLE {table(model_key)} (chunk_id text PRIMARY KEY,"
-                " post_id text NOT NULL, channel text NOT NULL, posted_at timestamptz NOT NULL,"
-                f" text text NOT NULL, embedding vector({model_cfg['dim']}) NOT NULL)"
-            )
-            rows = [
-                (c.chunk_id, c.post_id, c.channel, c.posted_at.to_pydatetime(), c.text, v)
-                for c, v in zip(chunks.itertuples(index=False), vectors, strict=True)
-            ]
-            execute_values(cur, f"INSERT INTO {table(model_key)} VALUES %s", rows, page_size=2000)
-            cur.execute(f"CREATE INDEX ON {table(model_key)} (posted_at)")
+            create_table(cur, model_key, model_cfg["dim"])
+            insert_chunks(cur, model_key, chunks, vectors)
             cur.execute(f"SELECT count(*), count(DISTINCT post_id) FROM {table(model_key)}")
             n_chunks, n_posts = cur.fetchone()
+        n_ingested = update_index(conn, cfg, model_key)
     finally:
         conn.close()
     by_channel = posts["channel"].value_counts().to_dict()
@@ -105,6 +140,7 @@ def build_index(cfg: dict, model_key: str) -> dict:
         "posts": n_posts,
         "chunks": n_chunks,
         "by_channel": by_channel,
+        "ingested_posts": n_ingested,
     }
 
 
@@ -122,4 +158,5 @@ if __name__ == "__main__":
     key = a.model or cfg["retrieval"]["embedding_model"]
     r = build_index(cfg, key)
     print(f"{r['table']}: {r['posts']} posts -> {r['chunks']} chunks "
-          f"({', '.join(f'{k} {v}' for k, v in sorted(r['by_channel'].items()))})")  # fmt: skip
+          f"({', '.join(f'{k} {v}' for k, v in sorted(r['by_channel'].items()))})"
+          f" + {r['ingested_posts']} ingested posts")  # fmt: skip

@@ -12,7 +12,7 @@ ALIAS    ?= champion
 
 .PHONY: setup lint test env up down nuke ps logs data data-seed run backfill bad-batch \
         row-counts snapshot train reproduce api-smoke corpus index index-all eval-windows \
-        eval-prelabel llm-rule llm-baseline rag-eval rag-eval-all
+        eval-prelabel llm-rule llm-baseline rag-eval rag-eval-all ingest-telegram tg-posts
 
 ## --- environment ----------------------------------------------------------
 setup:            ## pinned Python env from uv.lock
@@ -115,3 +115,10 @@ rag-eval:         ## retrieval + Gemini on the eval set: make rag-eval [MODEL=e5
 
 rag-eval-all:     ## the embedding-model comparison: rag-eval for every model
 	for m in e5_small e5_base minilm; do uv run python -m kyiv_alerts.llm.evaluate rag --model $$m; done
+
+ingest-telegram:  ## run DAG ingest_telegram now (scheduled 03:45/09:45/15:45/21:45 Kyiv) and wait
+	scripts/airflow_trigger.sh ingest_telegram
+
+tg-posts:         ## ingested Telegram posts per channel: count, newest post, hours since
+	docker compose exec -T postgres psql -U warehouse -d warehouse -c \
+	  "SELECT channel, count(*), max(posted_at) AS newest, round(extract(epoch FROM now() - max(posted_at)) / 3600, 1) AS hours_ago FROM telegram.posts GROUP BY channel"

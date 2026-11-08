@@ -45,6 +45,29 @@ def fetch_page(channel: str, before: int | None, retries: int = 6) -> str:
     raise RuntimeError(f"{url}: HTTP {resp.status_code} after {retries} tries")
 
 
+def fetch_new(channel: str, after_id: int | None, since: str, sleep_s: float = 0.8,
+              fetch=fetch_page) -> list[dict]:  # fmt: skip
+    """Posts newer than ``after_id`` (first run: from UTC date ``since``), oldest first."""
+    found, before, first = {}, None, True
+    while True:
+        posts = parse_page(fetch(channel, before), channel)
+        if first and not posts:
+            raise RuntimeError(f"t.me/s/{channel}: no posts parsed (markup changed?)")
+        first = False
+        new = [p for p in posts if (after_id is None or p["id"] > after_id)
+               and p["datetime_utc"][:10] >= since and p["id"] not in found]  # fmt: skip
+        found.update((p["id"], p) for p in new)
+        oldest = min((p["id"] for p in posts), default=None)
+        dates = [p["datetime_utc"] for p in posts if p["datetime_utc"]]
+        reached_known = after_id is not None and oldest is not None and oldest <= after_id
+        reached_since = bool(dates) and min(dates)[:10] < since
+        if not posts or reached_known or reached_since or oldest == before:
+            break
+        before = oldest
+        time.sleep(sleep_s)
+    return [found[i] for i in sorted(found)]
+
+
 def scrape(channel: str, since: str, until: str, out: Path, sleep_s: float = 0.8) -> int:
     """Posts with since <= date < until (UTC dates), newest first, appended to ``out``.
     Resumes from the oldest id already in ``out``."""
