@@ -1,0 +1,135 @@
+from datetime import UTC, datetime
+
+import pandas as pd
+import pytest
+
+from kyiv_alerts.llm.index import chunk_posts
+from kyiv_alerts.llm.metrics import cost_usd, hit_at_k, latency_stats, prf, reciprocal_rank
+from kyiv_alerts.llm.rag import Answer, format_posts, prompt_hash, render, window_posts
+from kyiv_alerts.llm.windows import QUESTIONS, quotes_post, rule_relevant, rule_threat
+
+
+def posts(*rows):
+    df = pd.DataFrame(rows, columns=["post_id", "channel", "posted_at", "text"])
+    df["posted_at"] = pd.to_datetime(df["posted_at"], utc=True)
+    return df
+
+
+def test_window_keeps_only_posts_before_t():
+    p = posts(("kpszsu/1", "kpszsu", "2026-09-01 08:59", "a"),
+              ("kpszsu/2", "kpszsu", "2026-09-01 10:30", "b"),
+              ("kpszsu/3", "kpszsu", "2026-09-01 12:00", "c"))  # fmt: skip
+    w = window_posts(p, datetime(2026, 9, 1, 12, tzinfo=UTC), hours=3)
+    assert list(w["post_id"]) == ["kpszsu/2"]  # 08:59 too old, 12:00 not yet known
+
+
+def test_long_posts_are_split_short_posts_stay_whole():
+    p = posts(
+        ("c/1", "c", "2026-09-01 10:00", "x" * 50), ("c/2", "c", "2026-09-01 10:01", "y" * 1200)
+    )
+    ch = chunk_posts(p, chunk_chars=500, overlap_chars=100)
+    assert (ch["post_id"] == "c/1").sum() == 1
+    assert (ch["post_id"] == "c/2").sum() == 3 and ch["text"].str.len().max() <= 500
+
+
+def test_retrieval_metrics():
+    ranked = ["a", "b", "c", "d"]
+    assert hit_at_k(ranked, {"c"}, 2) == 0.0 and hit_at_k(ranked, {"c"}, 3) == 1.0
+    assert reciprocal_rank(ranked, {"c", "d"}) == pytest.approx(1 / 3)
+    assert reciprocal_rank(ranked, {"z"}) == 0.0
+
+
+def test_answer_metrics_cost_latency():
+    assert prf(tp=3, fp=1, fn=2) == pytest.approx({"precision": 0.75, "recall": 0.6, "f1": 2 / 3})
+    assert prf(0, 0, 0)["f1"] == 0.0
+    assert cost_usd(1_000_000, 500_000, {"input": 0.3, "output": 2.5}) == pytest.approx(1.55)
+    stats = latency_stats([1.0] * 9 + [10.0])
+    assert stats["latency_p50_s"] == 1.0 and stats["latency_p95_s"] > 5 and stats["n_calls"] == 10
+
+
+def test_keyword_rule():
+    assert rule_relevant("Група ударних БпЛА курсом на Бровари") == 1
+    assert rule_relevant("Зліт МіГ-31К, загроза балістики по всій території") == 1
+    assert rule_relevant("Троєщина Оболонь Шахед") == 1  # Kyiv districts
+    assert rule_relevant("Шахед на Умань") == 0
+    assert rule_relevant("🚀Балістика на Харків") == 0  # regional, not nationwide
+    assert rule_relevant("Загроза застосування балістики") == 1
+    assert rule_relevant("ПАДАЄ", channel="smolii_ukraine") == 1  # Kyiv-only channel
+    assert rule_relevant("ПАДАЄ", channel="kpszsu") == 0
+    assert rule_relevant("Київ/область - без БПЛА. Можна давати відбій") == 0  # all clear
+    assert rule_threat("Загроза застосування балістики") == "ballistic"
+    assert rule_threat("Шахед курсом на Житомир") == "drones"
+
+
+def test_questions_do_not_quote_posts():
+    texts = ["🛵 Київщина: група ударних БпЛА курсом на Бровари", "Загроза балістики для столиці"]
+    assert not any(quotes_post(q, texts) for q in QUESTIONS)
+    assert quotes_post("група ударних БпЛА курсом на Бровари", texts)
+
+
+def test_prompts_render_and_hash():
+    p = posts(("kpszsu/9", "kpszsu", "2026-09-01 10:00", "Шахед\\nна Київ"))
+    text = render("prompts/answer_v1.md", question="Q?", now="2026-09-01 13:00", hours=3,
+                  posts=format_posts(p.to_dict("records")))  # fmt: skip
+    assert "[kpszsu/9] 2026-09-01 13:00 | kpszsu | Шахед\\nна Київ" in text and "Q?" in text
+    assert len(prompt_hash("prompts/answer_v1.md")) == 64
+
+
+def test_answer_schema_parses_llm_json():
+    a = Answer.model_validate_json(
+        '{"relevant_post_ids": ["kpszsu/9"], "threat_type": "drones", "summary": "Drones."}'
+    )
+    assert a.relevant_post_ids == ["kpszsu/9"]
+
+
+def _page(channel, posts):
+    return "".join(
+        f'<div data-post="{channel}/{i}"><time datetime="{t}"></time>'
+        f'<div class="tgme_widget_message_text">post {i}</div></div>'
+        for i, t in posts
+    )
+
+
+def test_fetch_new_stops_at_known_id_and_returns_oldest_first():
+    from kyiv_alerts.sources.telegram import fetch_new
+
+    day = "2026-11-08T"
+    pages = {None: [(105, day + "10:00:00+00:00"), (106, day + "10:05:00+00:00")],
+             105: [(103, day + "09:00:00+00:00"), (104, day + "09:30:00+00:00")]}  # fmt: skip
+    calls = []
+
+    def fetch(channel, before):
+        calls.append(before)
+        return _page(channel, pages[before])
+
+    posts = fetch_new("kpszsu", 103, "2026-10-24", sleep_s=0, fetch=fetch)
+    assert [p["id"] for p in posts] == [104, 105, 106]
+    assert calls == [None, 105]  # stopped once the page reached the known id 103
+
+
+def test_fetch_new_first_run_uses_since_and_flags_broken_markup():
+    from kyiv_alerts.sources.telegram import fetch_new
+
+    ch = "smolii_ukraine"
+    page = _page(ch, [(7, "2026-10-23T23:00:00+00:00"), (8, "2026-10-24T01:00:00+00:00")])
+    assert [p["id"] for p in fetch_new(ch, None, "2026-10-24", 0, lambda c, b: page)] == [8]
+    with pytest.raises(RuntimeError, match="no posts parsed"):
+        fetch_new(ch, None, "2026-10-24", 0, lambda c, b: "<html>changed</html>")
+
+
+def test_raw_file_round_trip_skips_posts_without_time():
+    import json
+
+    from kyiv_alerts.etl.telegram import parse_raw, raw_key
+
+    key = raw_key("kpszsu", datetime(2026, 11, 8, 7, 45, tzinfo=UTC))
+    assert key == "raw/telegram/kpszsu/2026-11-08/20261108T074500Z.jsonl"
+    t = "2026-11-08T07:00:00+00:00"
+    lines = [
+        {"post_id": "kpszsu/1", "channel": "kpszsu", "id": 1, "datetime_utc": t,
+         "text": "БпЛА на Київ", "views": "1K"},
+        {"post_id": "kpszsu/2", "channel": "kpszsu", "id": 2, "datetime_utc": "",
+         "text": "", "views": ""},
+    ]  # fmt: skip
+    rows = parse_raw(key, "\n".join(json.dumps(x, ensure_ascii=False) for x in lines).encode())
+    assert rows == [("kpszsu/1", "kpszsu", 1, t, "БпЛА на Київ", "1K", key)]

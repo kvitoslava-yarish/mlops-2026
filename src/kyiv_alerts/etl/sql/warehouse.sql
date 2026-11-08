@@ -84,3 +84,20 @@ CREATE TABLE IF NOT EXISTS features.m2_alert (
     PRIMARY KEY (alert_start, feature_version)
 );
 CREATE INDEX IF NOT EXISTS m2_batch_month_idx ON features.m2_alert (batch_month);
+
+-- Telegram posts from the DAG ingest_telegram. First-seen text is kept (an edit made after a
+-- forecast must not leak into its features); raw_key points at the immutable lake file.
+CREATE SCHEMA IF NOT EXISTS telegram;
+
+CREATE TABLE IF NOT EXISTS telegram.posts (
+    post_id     text        PRIMARY KEY,
+    channel     text        NOT NULL,
+    id          bigint      NOT NULL,
+    posted_at   timestamptz NOT NULL,
+    text        text        NOT NULL,
+    views       text        NOT NULL,
+    raw_key     text        NOT NULL,
+    loaded_at   timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS posts_channel_id_idx ON telegram.posts (channel, id);
+CREATE INDEX IF NOT EXISTS posts_posted_at_idx ON telegram.posts (posted_at);

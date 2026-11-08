@@ -265,17 +265,6 @@ Note the bad batch passed the size check (0.996), because merged episodes hide d
 
 `features.m1_hourly` (one row per hour) and `features.m2_alert` (one row per Kyiv alert), each with `feature_version = v3` and the label alongside. Features about other regions count only Kyiv's six neighbour oblasts (Kyivska, Zhytomyrska, Chernihivska, Cherkaska, Poltavska, Vinnytska). The serving-time source of every feature is in [design.md §5.3](docs/design.md#53-techniques). All features come from one module, [src/kyiv_alerts/features.py](src/kyiv_alerts/features.py), that Lab 4's service will reuse on live state.
 
-**Optional: Feast point-in-time demo.** [feature_repo/](feature_repo/) defines entity `city` and feature view `kyiv_state` (the issue-time M1 inputs, one row per 04:00 / 10:00 / 16:00 / 22:00 issue) over the exported snapshot. `make feast-demo` asks for the state at a time between two rows and checks that Feast returns the earlier one:
-
-```
-$ make feast-demo
-feature row A at 2026-08-27 04:00:00+03:00: {'neighbours_under_alert_at_issue': 6, 'days_since_long_alert': 6.81, 'kyiv_alert_min_prev_12h': 145.8, 'neighbour_starts_prev_12h': 14, 'kyiv_under_alert_at_issue': 0}
-feature row B at 2026-08-27 10:00:00+03:00: {'neighbours_under_alert_at_issue': 2, 'days_since_long_alert': 0.11, 'kyiv_alert_min_prev_12h': 386.3, 'neighbour_starts_prev_12h': 13, 'kyiv_under_alert_at_issue': 1}
-requested at     2026-08-27 07:00:00+03:00
-Feast returned   {'neighbours_under_alert_at_issue': 6.0, 'days_since_long_alert': 6.81, 'kyiv_alert_min_prev_12h': 145.8, 'neighbour_starts_prev_12h': 14.0, 'kyiv_under_alert_at_issue': 0.0}
-point-in-time correct (returned the earlier row A): True
-```
-
 ## 5. Baseline vs model (time split)
 
 Hold-out 2026-03-01 … 2026-08-28 (the official file stops on 2026-08-29); training data from 2023-01-01. Why a time split, why these dates and why an expanding window: [design.md §5.4](docs/design.md#54-experimentation-and-validation). Lower is better for Brier, log-loss and pinball.
@@ -374,13 +363,16 @@ dags/alerts_etl.py                 Airflow DAG, monthly batch (thin wrapper over
 dags/fetch_alerts_in_ua.py         Airflow DAG, archives the alerts.in.ua history on the 1st and 15th
 src/kyiv_alerts/
   config.py, batch.py, storage.py  shared basics: settings, the monthly batch, MinIO access
-  sources/                         upstream alert sources (pinned dataset, alerts.in.ua)
+  sources/                         upstream sources (pinned dataset, alerts.in.ua, Telegram preview)
+  llm/                             Lab 3: index (pgvector), rag, gemini, windows (eval set), metrics, evaluate
   features.py                      feature formulas, shared by ETL, training and (Lab 4) serving
   etl/                             the DAG steps: pipeline, validate, clean, warehouse, quality,
                                    snapshot; sql/warehouse.sql
   training/                        train, models, metrics, tracking (TrackedRun), lineage, reproduce
 configs/train.yaml                 split dates and hyperparameters
-feature_repo/                      Feast offline demo (optional)
+configs/rag.yaml                   corpus, chunking, retrieval, embedding models, LLM and prices
+prompts/                           versioned prompt files (answer, baseline, label); sha256 logged per run
+data/eval/                         evaluation windows and reviewed labels (committed)
 scripts/                           seeding, bad batch, Airflow run / backfill helpers
 docker/, docker-compose.yml        local stack (Airflow, MLflow images, Postgres init)
 data/raw.dvc, data/features.dvc,   data versions (contents live in the DVC remote)
@@ -401,3 +393,6 @@ tests/                             unit tests (no Docker needed): make test
 | Quality gate present | `make bad-batch` fails `quality_check` on purpose; output and screenshot in [§3](#3-quality-gate) | Lab 2 |
 | Experiments tracked | every run in MLflow (http://localhost:5001) has params, metrics, `data_version` and `git_commit` ([§6](#6-experiment-tracking-and-the-registry)) | Lab 2 |
 | Model registered with lineage | `kyiv-m1-start-risk@champion` / `kyiv-m2-duration@champion` tagged with data version and commit; `make reproduce` passes within the stated tolerance ([§6](#reproduce-a-registered-run)) | Lab 2 |
+| LLM component evaluated | `make rag-eval-all` logs hit@k, MRR and answer F1 for three embedding models next to the rule and no-retrieval baselines, on 40 windows with hand-reviewed labels ([§7](#7-lab-3-llm-over-air-force-and-kyiv-monitor-posts)) | Lab 3 |
+| Prompts versioned | prompts are files in [prompts/](prompts/); every run in `kyiv-llm-rag` carries `prompt_*_sha256`, `eval_set_sha256`, `data_version` (corpus) and `git_commit` | Lab 3 |
+| Cost and latency recorded | every LLM run logs tokens (input, output, thinking), `cost_usd`, `cost_usd_per_call` and latency p50 / p95 over 40 calls ([§7](#results-mlflow-experiment-kyiv-llm-rag-commit-3039de4)) | Lab 3 |

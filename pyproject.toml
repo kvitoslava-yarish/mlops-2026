@@ -6,13 +6,16 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "boto3>=1.35",
+    "google-genai>=1.0",
     "mlflow==3.16.1",
     "pandas>=2.2",
+    "pgvector>=0.3",
     "psycopg2-binary>=2.9",
     "pyarrow>=17",
     "pyyaml>=6.0",
     "requests>=2.32",
     "scikit-learn>=1.6",
+    "sentence-transformers>=3.0",
 ]
 
 [dependency-groups]
@@ -22,9 +25,6 @@ dev = [
     "pre-commit>=4.0",
     "pytest>=8.3",
     "ruff>=0.14",
-]
-feast = [
-    "feast==0.66.0",
 ]
 
 [build-system]
